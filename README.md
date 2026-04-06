@@ -2,7 +2,7 @@ My PC is old , so
 
 ***The solution: You absolutely must enable CSM (Compatibility Support Module) or Legacy Boot in the BIOS of your test computer, otherwise the computer will completely ignore your USB stick.***    
 
-[![Watch the demo](thumbnail.png)]([https://example.com/video](https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4))
+[![Watch the demo](thumbnail.png)](https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4)
 <videocontrols>
 <sourcesrc="https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4"type="video/mp4">
 </video>
