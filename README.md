@@ -13,8 +13,6 @@ https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
 + #include "cosmos_fs.h"
   
 <img width="798" height="599" alt="image" src="https://github.com/user-attachments/assets/b5a8834d-2372-4b0a-abfb-01a2da1b4717" />
-<img width="455" height="248" alt="image" src="https://github.com/user-attachments/assets/a043fc47-542d-429f-ac74-2f184694371a" />
-<img width="450" height="247" alt="image" src="https://github.com/user-attachments/assets/800622e5-9b4a-4a77-9917-d58874323edc" />
 
 ***update 06.14.2026***
 ***1. The Network Stack (Your Latest Milestone)
