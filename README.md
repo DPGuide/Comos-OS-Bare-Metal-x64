@@ -2,6 +2,20 @@ My PC is old , so
 
 ***The solution: You absolutely must enable CSM (Compatibility Support Module) or Legacy Boot in the BIOS of your test computer, otherwise the computer will completely ignore your USB stick.***
 
+<iframe  frameborder="0" 
+        style=" width: 100%; height: 110%;" src="[https://app](https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4)">
+      </iframe>
+      
+      <iframe width="560" height="315" src="[https://www.youtube.com/embed/fxKnmW0QxHQ](https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4)" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
+      <iframe src="[https://www.google.com/maps/embed?pb=!1m14!1m12!1m3!1d38877164.76467194!2d-95.677068!3d37.06250000000001!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!5e0!3m2!1sen!2sus!4v1422925644298](https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4)" width="600" height="450" frameborder="0" style="border:0"></iframe>
+
+      <object width="625" height="800">
+  <embed src="[http://url](https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4)"
+         type="application/x-shockwave-flash"
+         wmode="transparent" width="625" height="800" />
+</object>
+      
 <iframe src="https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4" width="560" height="315" width="600" height="450"></iframe>
 
 ***INCLUDES***
