@@ -8,6 +8,10 @@ My PC is old , so
       
       
       <iframe width="560" height="315" src="https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
+      <iframe  frameborder="0" 
+        style=" width: 100%; height: 110%;" src="https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4">
+      </iframe>
       
 
       <iframe src="[https://www.google.com/maps/embed?pb=!1m14!1m12!1m3!1d38877164.76467194!2d-95.677068!3d37.06250000000001!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!5e0!3m2!1sen!2sus!4v1422925644298](https://github.com/DPGuide/Comos-OS-Bare-Metal-x64/blob/main/0406.mp4)" width="600" height="450" frameborder="0" style="border:0"></iframe>
