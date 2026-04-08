@@ -14,6 +14,7 @@ https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
 + #include "net.h"
 + #include "cosmos_bytes.h"
 + #include "cosmos_fs.h"
++ #include "cosmos_tba.cpp"
 
 ***update 06.14.2026***
  + The Network Stack (Your Latest Milestone)
