@@ -67,6 +67,9 @@ https://github.com/user-attachments/assets/7c9e9b0f-48f5-4ff4-9125-79d3032fd856
 
 https://github.com/user-attachments/assets/e41248a9-968c-4747-ac06-b0fdac0dd0f2
 
+for test Bare-Metal-SATA-Driver!
+WSL commands:
+
 dd if=/dev/zero of=cosmos_drive.img bs=1M count=64
 
 qemu-system-i386 -cdrom cosmos.iso   -device ahci,id=ahci   -drive if=none,file=cosmos_drive.img,id=sata_disk,format=raw   -device ide-hd,drive=sata_disk,bus=ahci.0
