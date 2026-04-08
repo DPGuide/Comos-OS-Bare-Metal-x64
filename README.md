@@ -12,6 +12,8 @@ https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
   
 ***create for test QEMU "dd if=/dev/zero of=cosmos_drive.img bs=1M count=64"***
 
+***update 08.04.2026***
+
 ***INCLUDES - all BAREMETAL***
  ***Bare-Metal-SATA-Driver!***
 + #include "schneider_lang.cpp"
@@ -30,7 +32,7 @@ https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
 + #cosmos_cfs.cpp
 + + #cosmos_cfs.h
 
-***update 06.14.2026***
+
  + The Network Stack (Your Latest Milestone)
  + You've made the leap from an isolated PC to a network-enabled system.
  + PCI Bus Mastering: Your E1000 network card can now write directly and asynchronously to RAM (0x880000) via DMA.
