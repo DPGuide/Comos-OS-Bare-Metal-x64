@@ -1,5 +1,5 @@
 ***My PC is old , so***
-+ use qemu for quick test / under construction add REAL hardware
++ use qemu for quick test / under construction (add REAL hardware)
 
 ***The solution: You absolutely must enable CSM (Compatibility Support Module) or Legacy Boot in the BIOS of your test computer, otherwise the computer will completely ignore your USB stick.***    
 ***yeah its easier then you know or think to put a video into the README (all EMBED code crap at the internet not work !)***
