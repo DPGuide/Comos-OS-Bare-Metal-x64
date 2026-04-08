@@ -9,7 +9,7 @@ https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
 ***create for test QEMU "qemu-img create -f raw cosmos_hdd.img 100M"***
 + for boot with 100 MB HDD image "qemu-system-x86_64 -cdrom cosmos.iso -hda cosmos_hdd.img"
 
-***INCLUDES***
+***INCLUDES - all BAREMETAL***
 + #include "schneider_lang.cpp"
 + + #include "schneider_lang.h"
 + #include "pci.cpp"
