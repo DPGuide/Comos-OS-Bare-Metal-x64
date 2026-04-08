@@ -9,11 +9,16 @@ https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
 + for boot with 100 MB HDD image "qemu-system-x86_64 -cdrom cosmos.iso -hda cosmos_hdd.img"
 
 ***INCLUDES***
++ #include "schneider_lang.cpp"
 + #include "schneider_lang.h"
-+ #include "pci.h"
-+ #include "net.h"
-+ #include "cosmos_bytes.h"
-+ #include "cosmos_fs.h"
++ #include "pci.cpp"
++ + #include "pci.h"
++ #include "net.cpp"
++ + #include "net.h"
++ #include "cosmos_bytes.cpp"
++ + #include "cosmos_bytes.h"
++ #include "cosmos_fs.cpp"
++ + #include "cosmos_fs.h"
 + #include "cosmos_tba.cpp"
 
 ***update 06.14.2026***
