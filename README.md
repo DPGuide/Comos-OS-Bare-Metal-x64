@@ -7,7 +7,7 @@
 https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
 
   ***Bare-Metal-SATA-Driver!***
-  
+  ***qemu-img create -f raw cosmos_hdd.img 100M***
   ***qemu-system-x86_64 -cdrom cosmos.iso -hda cosmos_hdd.img***
   
 ***create for test QEMU "dd if=/dev/zero of=cosmos_drive.img bs=1M count=64"***
