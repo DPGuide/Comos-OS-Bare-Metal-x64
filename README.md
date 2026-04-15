@@ -15,19 +15,13 @@ https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
   ******
   ******
 ***WSL COMMANDS:***
++ dd if=/dev/zero of=cosmos_usb.img bs=1M count=16
 + qemu-img create -f raw cosmos_hdd.img 100M
 + qemu-system-x86_64 -cdrom cosmos.iso -hda cosmos_hdd.img
 + + for test Bare-Metal-SATA-Driver!
 + + WSL commands:
 + dd if=/dev/zero of=cosmos_drive.img bs=1M count=64
-+ qemu-system-x86_64 -cdrom cosmos.iso -device ahci,id=ahci -drive if=none,file=cosmos_drive.img,id=sata_disk,format=raw -device ide-hd,drive=sata_disk,bus=ahci.0
-+ qemu-system-i386 -cdrom cosmos.iso \
-    -m 512 \
-    -device ahci,id=ahci0 \
-    -drive id=disk0,file=cosmos_drive.img,if=none,format=raw \
-    -device ide-hd,drive=disk0,bus=ahci0.0 \
-    -drive id=disk1,file=cosmos_hdd.img,if=none,format=raw \
-    -device ide-hd,drive=disk1,bus=ahci0.1
++ qemu-system-i386 -cdrom cosmos.iso -m 512   -device ich9-ahci,id=ahci0   -drive id=disk0,file=cosmos_drive.img,format=raw,if=none   -device ide-hd,drive=disk0,bus=ahci0.0   -drive id=disk1,file=cosmos_hdd.img,format=raw,if=none   -device ide-hd,drive=disk1,bus=ahci0.1   -device piix3-usb-uhci,id=usb0   -drive id=usbstick,file=cosmos_usb.img,format=raw,if=none   -device usb-storage,bus=usb0.0,drive=usbstick
  
   ******
   ******
