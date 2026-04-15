@@ -16,7 +16,7 @@ https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
   ******
 ***WSL COMMANDS:***
 + + DRVIERS HDD / CDROM / USB 
-+ + ***WSL COMMANDS***
++ + ***WSL COMMANDS for QEMUJ Quick Test***
 + dd if=/dev/zero of=cosmos_usb.img bs=1M count=16
 + qemu-img create -f raw cosmos_hdd.img 100M
 + dd if=/dev/zero of=cosmos_drive.img bs=1M count=64
