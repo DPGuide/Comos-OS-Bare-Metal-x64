@@ -11,7 +11,11 @@
 ***The solution: You absolutely must enable CSM (Compatibility Support Module) or Legacy Boot in the BIOS of your test computer, otherwise the computer will completely ignore your USB stick.***    
 ***yeah its easier then you know or think to put a video into the README (all EMBED code crap at the internet not work !)***
 
-https://github.com/user-attachments/assets/79b9b1fa-d518-4435-82da-7836880f9b3a
+
+https://github.com/user-attachments/assets/48e6fa54-ce7e-4704-960c-55f482039838
+
+
+
   ******
   ******
 ***WSL COMMANDS:***
