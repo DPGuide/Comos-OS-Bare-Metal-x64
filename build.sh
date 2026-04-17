@@ -2,6 +2,14 @@
 
 # BARE METAL FIX: Bricht das Skript sofort ab, wenn der Compiler einen Fehler wirft!
 set -e
+# BARE METAL FIX: Bricht das Skript sofort ab, wenn der Compiler einen Fehler wirft!
+set -e
+
+echo "0. Alten Müll aufräumen (Clean Build)..."
+rm -f *.o *.elf
+rm -f isodir/boot/kernel.bin
+rm -f isodir/KERNEL.BIN
+rm -f cosmos.iso
 
 echo "1. Ordner für GRUB anlegen..."
 mkdir -p isodir/boot/grub
