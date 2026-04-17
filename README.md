@@ -46,22 +46,3 @@ https://github.com/user-attachments/assets/48e6fa54-ce7e-4704-960c-55f482039838
 
  ******
  ******
-
- + The Network Stack (Your Latest Milestone)
- + You've made the leap from an isolated PC to a network-enabled system.
- + PCI Bus Mastering: Your E1000 network card can now write directly and asynchronously to RAM (0x880000) via DMA.
- + ARP (Address Resolution Protocol): Your kernel can query for MAC addresses on the LAN (CONNECT) and parse the responses.
- + DHCP Client: You can send a broadcast (DHCP), the router responds, and your kernel automatically extracts its own IP address from the UDP packet.
- + UDP Payloads: You have the functions (send_udp, send_cosmos_block) to send your own raw data blocks to the network.
- + The Custom Window Manager (GUI)
- + Hardware & Storage (I/O)
- + PCI scanner: You read the entire bus, identify vendor IDs, and differentiate between Realtek (8139), Intel (E1000), GPUs, and USB controllers.
- + ATA/IDE Hard Drives: Your ata_write_sector and ata_read_sector (PIO LBA28) read and write actual sectors on the hard drive.
- + Real-Time Clock (RTC): You can read the hardware clock directly via port 0x70/0x71.
- + Audio & Effects: PC speaker support (play_freq) including boot music and the awesome "Earthquake" screen-shake effect.
- + APPS :
- + CMD (ID 5): Your command prompt with history, parsing, and direct connection to the network stack (CONNECT, DHCP, IPCONFIG).
- + Cosmos Explorer (ID 4): A graphical file manager that visualizes your file system and can load files into the editor.
- + Notepad & Save As (ID 0 & 2): A text editor that writes sectors directly to the disk via the ATA driver.***
-  ******
-  ******
