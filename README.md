@@ -74,15 +74,3 @@ https://github.com/user-attachments/assets/48e6fa54-ce7e-4704-960c-55f482039838
   ******
   ******
 <img width="638" height="468" alt="image" src="https://github.com/user-attachments/assets/98b826c6-6d75-4d5e-a371-9e7d651f6561" />)<img width="698" height="127" alt="image" src="https://github.com/user-attachments/assets/fa0f31a6-f00c-467e-8a13-ef162c88e40c" />
-
-
-
-***Ping Pong - BareMetal***
-
-https://github.com/user-attachments/assets/7c9e9b0f-48f5-4ff4-9125-79d3032fd856
-
-***Blobbey BareMetal***
-
-https://github.com/user-attachments/assets/e41248a9-968c-4747-ac06-b0fdac0dd0f2
-  ******
-  ******
