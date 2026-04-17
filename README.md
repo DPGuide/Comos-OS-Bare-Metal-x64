@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/48e6fa54-ce7e-4704-960c-55f482039838
   ******
   ******
 
-***update 13.04.2026***
+***update 17.04.2026***
 
 ***INCLUDES - all BAREMETAL***
  ***Bare-Metal-SATA-Driver!***
@@ -43,6 +43,6 @@ https://github.com/user-attachments/assets/48e6fa54-ce7e-4704-960c-55f482039838
 + #include "kernel_main.cpp"
 + #include "cosmos_pci.cpp"
 + #include "cosmos_usb.cpp"
-
++ + Graphic Design & Oracle DB (its awesome)
  ******
  ******
