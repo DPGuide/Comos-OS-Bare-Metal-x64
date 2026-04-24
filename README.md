@@ -1,5 +1,5 @@
   ******
-  ***OS SYSTEM DUALSYSTEM 2in1***
+  ***OS SYSTEM DUALSYSTEM 2in1 x32 & x64***
   ******
 
   Where can you find an OS that starts in 32-bit mode and, with the push of a button, switches to a 64-bit OS?
