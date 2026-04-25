@@ -34,6 +34,9 @@ qemu-system-x86_64 -boot d -cdrom cosmos.iso -m 512 -device ich9-ahci,id=ahci0 -
 
   ******
   ***update 25.04.2026***
+  + no both game i will take out from kernel.cpp soon 
+  + and put them into a app.cpp, then its easier end better
+  +  to implkement it in to x64 OS2
   ******
 
  ******
