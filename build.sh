@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+echo "=== AUTOMATISCHES BACKUP ==="
+BACKUP_DIR="backups/cosmos_$(date +%Y-%m-%d_%H-%M-%S)"
+mkdir -p "$BACKUP_DIR"
+# Kopiert NUR die .cpp und .h Dateien ins Backup!
+cp *.cpp *.h "$BACKUP_DIR/" 2>/dev/null || true
+echo "-> Quellcodes sicher kopiert nach: $BACKUP_DIR"
+echo "============================"
+
 echo "0. Alten Müll aufräumen..."
 rm -f *.o *.elf cosmos.iso
 rm -rf isodir
