@@ -27,9 +27,9 @@ OS2 16 - 64 Bit Bare Metal
 + + DRVIERS HDD / CDROM / USB 
 + + ***WSL COMMANDS for QEMU Quick Test***
 + + ***bs=512 bedeutet Sektorgröße, seek=10000 springt zu LBA 10000***
-  + 
+  + command for hdd image
 + # dd if=app.bin of=hdd.img bs=512 seek=10000 conv=notrunc
-
+  + command to run QEMU with the hdd image
 + # qemu-system-x86_64 -cdrom cosmos.iso -drive id=disk,file=hdd.img,if=none -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512
 
   ******
