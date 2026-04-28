@@ -26,11 +26,11 @@ OS2 16 - 64 Bit Bare Metal
 ***For QEMU QUICK TEST - WSL COMMANDS:***
 + + DRVIERS HDD / CDROM / USB 
 + + ***WSL COMMANDS for QEMU Quick Test***
-+ dd if=/dev/zero of=cosmos_usb.img bs=1M count=16
-+ qemu-img create -f raw cosmos_hdd.img 100M
-+ dd if=/dev/zero of=cosmos_drive.img bs=1M count=64
++ # bs=512 bedeutet Sektorgröße, seek=10000 springt zu LBA 10000
+dd if=app.bin of=hdd.img bs=512 seek=10000 conv=notrunc
 
-qemu-system-x86_64 -boot d -cdrom cosmos.iso -m 512 -device ich9-ahci,id=ahci0 -drive id=disk0,file=cosmos_drive.img,format=raw,if=none -device ide-hd,drive=disk0,bus=ahci0.0 -drive id=disk1,file=cosmos_hdd.img,format=raw,if=none -device ide-hd,drive=disk1,bus=ahci0.1 -device qemu-xhci,id=xhci0 -drive id=usbstick,file=cosmos_usb.img,format=raw,if=none -device usb-storage,bus=xhci0.0,drive=usbstick
+
+qemu-system-x86_64 -cdrom cosmos.iso -drive id=disk,file=hdd.img,if=none -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512
 
   ******
   ***update 25.04.2026***
