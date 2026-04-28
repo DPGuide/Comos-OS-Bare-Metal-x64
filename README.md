@@ -16,21 +16,11 @@ https://github.com/user-attachments/assets/48e6fa54-ce7e-4704-960c-55f482039838
 OS2 16 - 64 Bit Bare Metal
 <img width="735" height="575" alt="image" src="https://github.com/user-attachments/assets/09d68d32-95e2-4582-a91f-5ef7bbddf63b" />
 
-
-
-
 ***with RUFUS in DD MODE THE ISO or Ventoy just copy the ISO on the USB-Stick***<img width="497" height="721" alt="image" src="https://github.com/user-attachments/assets/c074f8c4-bd73-43d8-b329-534915a1e63e" />
 
   ******
+  
   ******
-***For QEMU QUICK TEST - WSL COMMANDS:***
-+ + DRVIERS HDD / CDROM / USB 
-+ + ***WSL COMMANDS for QEMU Quick Test***
-+ + ***bs=512 bedeutet Sektorgröße, seek=10000 springt zu LBA 10000***
-  + command for hdd image
-+ # dd if=app.bin of=hdd.img bs=512 seek=10000 conv=notrunc
-  + command to run QEMU with the hdd image
-+ # qemu-system-x86_64 -cdrom cosmos.iso -drive id=disk,file=hdd.img,if=none -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512
 
   ******
   ***update 25.04.2026***
