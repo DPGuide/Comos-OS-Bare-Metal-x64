@@ -1,6 +1,8 @@
 ***to complie , just install in youre windows terminal (CMD) WSL and then run the build.sh***
 
 ***no you dont need anykind of other tools or packages, this here is pure bare metal***
+
+***sure feel free to use it by youre owen , and make youre owen changes. for youre private work***
   
   ******
   ***DUAL OS SYSTEM - 2in1 x32 & x64***
