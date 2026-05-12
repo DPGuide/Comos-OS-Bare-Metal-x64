@@ -9,6 +9,8 @@
 ***for tools / programms or games , ok. but for the hardware . NO , they all gonna slow down the system if you use linux or windows things for hardware***
 
 ***if you have problems ask AI Gemini Pro , all other throw away , i have push gemini since november 2025 in pure bare metal , Gemini Pro is now the best , for pure bare metal***
+
+***I have disproven many things—situations where, according to the internet (and Gemini), it supposedly couldn't be done! But with my approach, it worked after all!***
   
   ******
   ***DUAL OS SYSTEM - 2in1 x32 & x64***
