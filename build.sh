@@ -45,8 +45,9 @@ g++ -m32 -O2 -c cosmos_ahci.cpp -o cosmos_ahci_32.o -ffreestanding -fno-exceptio
 g++ -m32 -O2 -c cosmos_cfs.cpp -o cosmos_cfs_32.o -ffreestanding -fno-exceptions -fno-rtti -fpermissive -Wno-int-to-pointer-cast
 g++ -m32 -O2 -c cosmos_usb.cpp -o cosmos_usb_32.o -ffreestanding -fno-exceptions -fno-rtti -fpermissive -Wno-int-to-pointer-cast
 g++ -m32 -O2 -c cosmos_partition.cpp -o cosmos_partition_32.o -ffreestanding -fno-exceptions -fno-rtti -fpermissive -Wno-int-to-pointer-cast
+g++ -m32 -O2 -c memory.cpp -o memory_32.o -ffreestanding -fno-exceptions -fno-rtti -fpermissive -Wno-int-to-pointer-cast
 
-ld -m elf_i386 -T linker.ld -static -o isodir/boot/kernel.bin boot.o kernel_32.o pci_32.o net_32.o cosmos_bytes_32.o cosmos_fs_32.o cosmos_tba_32.o cosmos_ahci_32.o cosmos_cfs_32.o cosmos_usb_32.o cosmos_partition_32.o
+ld -m elf_i386 -T linker.ld -static -o isodir/boot/kernel.bin boot.o kernel_32.o pci_32.o net_32.o cosmos_bytes_32.o cosmos_fs_32.o cosmos_tba_32.o cosmos_ahci_32.o cosmos_cfs_32.o cosmos_usb_32.o cosmos_partition_32.o memory_32.o
 
 # ==========================================
 # OS 2: 64-BIT PAYLOAD (KERNEL V2)
@@ -65,9 +66,10 @@ g++ -m64 -mno-red-zone -O2 -c cosmos_cfs.cpp -o cosmos_cfs_64.o -ffreestanding -
 g++ -m64 -mno-red-zone -O2 -c cosmos_usb.cpp -o cosmos_usb_64.o -ffreestanding -fno-exceptions -fno-rtti -fpermissive -Wno-int-to-pointer-cast
 g++ -m64 -c arcade.cpp -o arcade.o -ffreestanding -O2 -Wall -Wextra -fno-exceptions -fno-rtti -mno-red-zone
 g++ -m64 -mno-red-zone -O2 -c cosmos_partition.cpp -o cosmos_partition_64.o -ffreestanding -fno-exceptions -fno-rtti -fpermissive -Wno-int-to-pointer-cast
+g++ -m64 -mno-red-zone -O2 -c memory.cpp -o memory_64.o -ffreestanding -fno-exceptions -fno-rtti -fpermissive -Wno-int-to-pointer-cast
 
 echo "4. Linke OS2 (Die flache KERNEL.BIN)..."
-ld -m elf_x86_64 -T linker64.ld --allow-multiple-definition os2_entry.o kernel_main_64.o kernel_64.o pci_64.o net_64.o cosmos_bytes_64.o cosmos_fs_64.o cosmos_tba_64.o cosmos_ahci_64.o cosmos_cfs_64.o cosmos_usb_64.o arcade.o cosmos_partition_64.o -o kernel_main.elf
+ld -m elf_x86_64 -T linker64.ld --allow-multiple-definition os2_entry.o kernel_main_64.o kernel_64.o pci_64.o net_64.o cosmos_bytes_64.o cosmos_fs_64.o cosmos_tba_64.o cosmos_ahci_64.o cosmos_cfs_64.o cosmos_usb_64.o arcade.o cosmos_partition_64.o memory_64.o -o kernel_main.elf
 
 objcopy -O binary kernel_main.elf isodir/KERNEL.BIN
 
@@ -75,16 +77,30 @@ objcopy -O binary kernel_main.elf isodir/KERNEL.BIN
 # NEU: EXTERNE APP KOMPILIEREN & BRENNEN
 # ==========================================
 echo "-> Kompiliere externe App (app.cpp)..."
-g++ -m64 -mno-red-zone -O2 -c app.cpp -o app.o -ffreestanding -fno-exceptions -fno-rtti
-ld -m elf_x86_64 --oformat binary -Ttext 0x0 app.o -o app.bin
 
-echo "-> Erstelle SATA-Festplatte und brenne App..."
-# Falls hdd.img nicht existiert, erstellen wir eine leere 10 MB Platte
-if [ ! -f hdd.img ]; then
-    dd if=/dev/zero of=hdd.img bs=1M count=10 status=none
-fi
-# App.bin auf Sektor 10000 brennen (ohne den Rest der Platte zu löschen)
-dd if=app.bin of=hdd.img bs=512 seek=10000 conv=notrunc status=none
+# 1. Mini-Linker-Script für die App (Auf 80 MB ausgerichtet!)
+cat > app_linker.ld << 'EOF'
+ENTRY(app_main)
+SECTIONS
+{
+    . = 0x05000000;
+    .text : { *(.text) }
+    .rodata : { *(.rodata) }
+    .data : { *(.data) }
+    .bss : { *(.bss) }
+}
+EOF
+
+# 2. App kompilieren
+g++ -m64 -mno-red-zone -O2 -c app.cpp -o app.o -ffreestanding -fno-exceptions -fno-rtti
+
+# 3. Als sauberes ELF linken (Verhindert Metadaten-Müll am Anfang)
+ld -m elf_x86_64 -T app_linker.ld app.o -o app.elf
+
+# 4. Den blanken Maschinencode extrahieren (Exakt wie beim Kernel!)
+objcopy -O binary app.elf app.bin
+
+echo "-> App.bin erfolgreich erstellt!"
 # ==========================================
 
 echo "5. ISO erstellen..."

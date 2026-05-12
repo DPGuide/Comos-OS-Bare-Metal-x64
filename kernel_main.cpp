@@ -5,6 +5,7 @@
 #include "arcade.h"
 #include <stdint.h>
 #include <stddef.h>
+extern "C" void disable_nx_for_app(unsigned long long virtual_addr, unsigned long long size_in_bytes);
 /// ==========================================
 /// OS2 NATIVE 64-BIT NETWORK SCANNER
 /// ==========================================
@@ -937,13 +938,26 @@ _50 DrawOrganicPlanet(_43 cx, _43 cy, _43 radius, _89 base_col) {
     }
 }
 /// Lädt eine Datei ab einem bestimmten LBA-Sektor in den RAM und startet sie
-/// Lädt eine Datei ab einem bestimmten LBA-Sektor in den RAM und startet sie
 bool load_and_run_bin(uint32_t start_lba, uint32_t sector_count) {
     if (num_tasks >= 4) return false;
     
-    /// BARE METAL FIX: Wir ignorieren die Festplatte komplett!
-    /// Wir feuern stattdessen unsere sichere Kernel-Funktion als neuen Task ab.
-    create_task(dynamic_task_worker);
+    // 1. Ziel-Adresse im RAM ermitteln (Dein Array aus dem Kernel)
+    uint32_t task_id = num_tasks;
+    uint8_t* target_ram = user_programs[task_id];
+    
+    // 2. DIE ECHTEN DATEN LADEN
+    // (Hier musst du deinen bestehenden Festplatten-Lese-Befehl einfügen, 
+    // der die Sektoren in 'target_ram' schreibt. Zum Beispiel so:)
+    // ahci_read_sectors(get_active_ahci_port(), start_lba, sector_count, (unsigned long long)target_ram);
+    
+    // 3. BARE METAL FIX: DEN DATEN-BUNKER AUFSCHLIESSEN!
+    // Wir sagen der Memory Management Unit der CPU: "Achtung, das hier ist jetzt ausführbarer Code!"
+    // Wir berechnen die Größe der App in Bytes (Anzahl Sektoren * 512).
+    disable_nx_for_app((unsigned long long)target_ram, sector_count * 512);
+    
+    // 4. TASK IN DEN SCHEDULER LADEN
+    // Wir casten die RAM-Adresse in einen Funktionspointer und feuern sie ab!
+    create_task((void(*)())target_ram);
     
     return true;
 }
