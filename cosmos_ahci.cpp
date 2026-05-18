@@ -893,28 +893,35 @@ HBA_PORT* get_active_ahci_port() {
 }
 _44 ahci_read(HBA_PORT *port, _89 startlba, _50 *target_ram_address) {
     port->is = (_89)-1;
+    port->serr = (_89)-1; /// BARE METAL FIX: SERR (Fehler-Sperre) löschen!
+    
     _89 slot = 0;
     _89 slots = (port->sact | port->ci);
     _39 (_43 i=0; i<32; i++) {
         _15 ((slots & (1 << i)) == 0) { slot = i; _37; }
     }
     _15 (slot == 32) _96 0;
+    
     HBA_CMD_HEADER *cmdheader = (HBA_CMD_HEADER*)port->clb;
     cmdheader += slot;
     cmdheader->cfl = _64(FIS_REG_H2D)/_64(_89); 
-    cmdheader->w = 1; 
+    cmdheader->w = 0; /// BARE METAL FIX: Lesen ist 0!
     cmdheader->prdtl = 1;
+    
     HBA_CMD_TBL *cmdtbl = (HBA_CMD_TBL*)(cmdheader->ctba);
     _39 (_43 i=0; i<_64(HBA_CMD_TBL) + (cmdheader->prdtl-1)*_64(HBA_PRDT_ENTRY); i++) {
         ((_184*)cmdtbl)[i] = 0;
     }
+    
+    /// BARE METAL FIX: Adresse sicher auf 64-Bit aufteilen!
     cmdtbl->prdt_entry[0].dba = (_89)(uint64_t)target_ram_address;
-    cmdtbl->prdt_entry[0].dbau = 0;
+    cmdtbl->prdt_entry[0].dbau = (_89)(((uint64_t)target_ram_address) >> 32); 
     cmdtbl->prdt_entry[0].dbc = 511 | (1 << 31);
+    
     FIS_REG_H2D *cmdfis = (FIS_REG_H2D*)(&cmdtbl->cfis);
     cmdfis->fis_type = 0x27; 
     cmdfis->c = 1;           
-    cmdfis->command = 0x35;
+    cmdfis->command = 0x25; /// BARE METAL FIX: 0x25 ist READ DMA EXT! (Stand auf 0x35 Write!)
     cmdfis->lba0 = (_184)startlba;
     cmdfis->lba1 = (_184)(startlba >> 8);
     cmdfis->lba2 = (_184)(startlba >> 16);
@@ -924,20 +931,34 @@ _44 ahci_read(HBA_PORT *port, _89 startlba, _50 *target_ram_address) {
     cmdfis->lba5 = 0;
     cmdfis->countl = 1;      
     cmdfis->counth = 0;
+    
     _43 spin = 0;
-    _114 ((port->tfd & (0x80 | 0x08)) && spin < 500000) spin++;
+    _114 ((port->tfd & (0x80 | 0x08)) && spin < 1000000) spin++;
+    _15 (spin >= 1000000) _96 0;
+    
+    /// BARE METAL FIX: Cache leeren, BEVOR der Controller liest!
+    __asm__ _192("wbinvd" ::: "memory");
+    
     port->ci = 1 << slot;
+    
     _43 wait_spin = 0;
-    _114 (wait_spin < 500000) {
+    _114 (wait_spin < 10000000) { /// Timeout massiv erhöht
         _15 ((port->ci & (1 << slot)) == 0) _37;
         _15 (port->is & (1<<30)) _96 0;
         wait_spin++;
     }
-    _15 (wait_spin >= 500000) _96 0;
+    
+    /// BARE METAL FIX: Cache leeren, NACHDEM gelesen wurde!
+    __asm__ _192("wbinvd" ::: "memory");
+    
+    _15 (wait_spin >= 10000000) _96 0;
     _96 1; 
 }
+
 _44 ahci_write(HBA_PORT *port, _89 startlba, _50 *source_ram_address) {
     port->is = (_89)-1;
+    port->serr = (_89)-1; 
+    
     _89 slot = 0;
     _89 slots = (port->sact | port->ci);
     _39 (_43 i=0; i<32; i++) {
@@ -948,7 +969,7 @@ _44 ahci_write(HBA_PORT *port, _89 startlba, _50 *source_ram_address) {
     HBA_CMD_HEADER *cmdheader = (HBA_CMD_HEADER*)port->clb;
     cmdheader += slot;
     cmdheader->cfl = _64(FIS_REG_H2D)/_64(_89); 
-    cmdheader->w = 1; 
+    cmdheader->w = 1; /// BARE METAL FIX: Schreiben ist 1!
     cmdheader->prdtl = 1;
     
     HBA_CMD_TBL *cmdtbl = (HBA_CMD_TBL*)(cmdheader->ctba);
@@ -956,14 +977,15 @@ _44 ahci_write(HBA_PORT *port, _89 startlba, _50 *source_ram_address) {
         ((_184*)cmdtbl)[i] = 0;
     }
     
+    /// BARE METAL FIX: Adresse sicher auf 64-Bit aufteilen!
     cmdtbl->prdt_entry[0].dba = (_89)(uint64_t)source_ram_address;
-    cmdtbl->prdt_entry[0].dbau = 0;
+    cmdtbl->prdt_entry[0].dbau = (_89)(((uint64_t)source_ram_address) >> 32); 
     cmdtbl->prdt_entry[0].dbc = 511 | (1 << 31);
     
     FIS_REG_H2D *cmdfis = (FIS_REG_H2D*)(&cmdtbl->cfis);
     cmdfis->fis_type = 0x27; 
     cmdfis->c = 1;           
-    cmdfis->command = 0x35; 
+    cmdfis->command = 0x35;  /// 0x35 ist WRITE DMA EXT
     cmdfis->lba0 = (_184)startlba;
     cmdfis->lba1 = (_184)(startlba >> 8);
     cmdfis->lba2 = (_184)(startlba >> 16);
@@ -974,26 +996,24 @@ _44 ahci_write(HBA_PORT *port, _89 startlba, _50 *source_ram_address) {
     cmdfis->countl = 1;      
     cmdfis->counth = 0;
 
-    /// BARE METAL FIX 1: Timeout vor dem Senden auf 10 Mio erhöhen
     _43 spin = 0;
     _114 ((port->tfd & (0x80 | 0x08)) && spin < 1000000) spin++;
     _15 (spin >= 1000000) _96 0; 
     
-    /// BARE METAL FIX 2: Zwingt die CPU, den Notepad-Text in den RAM zu schreiben!
     __asm__ _192("wbinvd" ::: "memory");
     
     port->ci = 1 << slot;
     
-    /// BARE METAL FIX 3: Timeout nach dem Senden auf 50.000.000 erhöhen!
-    /// QEMU braucht Zeit, um die .img Datei auf deinem Linux-Host zu beschreiben.
     _43 wait_spin = 0;
-    _114 (wait_spin < 1000000) {
+    _114 (wait_spin < 10000000) {
         _15 ((port->ci & (1 << slot)) == 0) _37; 
         _15 (port->is & (1<<30)) _96 0;      
         wait_spin++;
     }
     
-    _15 (wait_spin >= 1000000) _96 0;
+    __asm__ _192("wbinvd" ::: "memory");
+    
+    _15 (wait_spin >= 10000000) _96 0;
     _96 1; 
 }
 /// ==========================================
@@ -1025,4 +1045,70 @@ _50 ahci_get_raw_identify(_43 port_no, _182* out_buffer) {
     _39(_43 i=0; i<256; i++) {
         out_buffer[i] = word_buf[i];
     }
+}
+_44 ahci_read_multi(HBA_PORT *port, _89 startlba, _43 count, _50 *target_ram_address) {
+    port->is = (_89)-1;
+    port->serr = (_89)-1; 
+    
+    _89 slot = 0;
+    _89 slots = (port->sact | port->ci);
+    _39 (_43 i=0; i<32; i++) {
+        _15 ((slots & (1 << i)) == 0) { slot = i; _37; }
+    }
+    _15 (slot == 32) _96 0;
+    
+    HBA_CMD_HEADER *cmdheader = (HBA_CMD_HEADER*)port->clb;
+    cmdheader += slot;
+    cmdheader->cfl = _64(FIS_REG_H2D)/_64(_89); 
+    cmdheader->w = 0; 
+    cmdheader->prdtl = 1;
+    
+    HBA_CMD_TBL *cmdtbl = (HBA_CMD_TBL*)(cmdheader->ctba);
+    _39 (_43 i=0; i<_64(HBA_CMD_TBL) + (cmdheader->prdtl-1)*_64(HBA_PRDT_ENTRY); i++) {
+        ((_184*)cmdtbl)[i] = 0;
+    }
+    
+    cmdtbl->prdt_entry[0].dba = (_89)(uint64_t)target_ram_address;
+    cmdtbl->prdt_entry[0].dbau = (_89)(((uint64_t)target_ram_address) >> 32); 
+    // BARE METAL FIX: Wir lesen "count" Sektoren auf einmal!
+    cmdtbl->prdt_entry[0].dbc = ((count * 512) - 1) | (1 << 31);
+    
+    FIS_REG_H2D *cmdfis = (FIS_REG_H2D*)(&cmdtbl->cfis);
+    cmdfis->fis_type = 0x27; 
+    cmdfis->c = 1;           
+    cmdfis->command = 0x25; 
+    cmdfis->lba0 = (_184)startlba;
+    cmdfis->lba1 = (_184)(startlba >> 8);
+    cmdfis->lba2 = (_184)(startlba >> 16);
+    cmdfis->device = 1<<6;   
+    cmdfis->lba3 = (_184)(startlba >> 24);
+    cmdfis->lba4 = 0;        
+    cmdfis->lba5 = 0;
+    // BARE METAL FIX: Sektor-Anzahl in den FIS-Header schreiben!
+    cmdfis->countl = count & 0xFF;      
+    cmdfis->counth = (count >> 8) & 0xFF;
+    
+    _43 spin = 0;
+    _114 ((port->tfd & (0x80 | 0x08)) && spin < 10000000) { 
+        __asm__ _192("pause"); 
+        spin++; 
+    }
+    _15 (spin >= 10000000) _96 0;
+    
+    __asm__ _192("wbinvd" ::: "memory");
+    
+    port->ci = 1 << slot;
+    
+    _43 wait_spin = 0;
+    _114 (wait_spin < 10000000) {
+        __asm__ _192("pause");
+        _15 ((port->ci & (1 << slot)) == 0) _37;
+        _15 (port->is & (1<<30)) _96 0;
+        wait_spin++;
+    }
+    
+    __asm__ _192("wbinvd" ::: "memory");
+    
+    _15 (wait_spin >= 10000000) _96 0;
+    _96 1; 
 }

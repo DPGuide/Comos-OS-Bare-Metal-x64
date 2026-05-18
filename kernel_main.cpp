@@ -5,6 +5,14 @@
 #include "arcade.h"
 #include <stdint.h>
 #include <stddef.h>
+bool is_app_running = false;
+// --- BARE METAL EXTERNS ---
+// Sag der kernel_main.cpp, dass diese Variable in der cosmos_ahci.cpp existiert!
+extern uint32_t global_ahci_abar;
+struct HBA_PORT; 
+extern HBA_PORT* get_active_ahci_port();
+extern _44 ahci_read(HBA_PORT* port, _89 startlba, void* target_ram_address);
+// disable_nx ist extern "C" - wir nutzen native 64-Bit Typen für saubere Pointer-Casts!
 extern "C" void disable_nx_for_app(unsigned long long virtual_addr, unsigned long long size_in_bytes);
 /// ==========================================
 /// OS2 NATIVE 64-BIT NETWORK SCANNER
@@ -38,6 +46,20 @@ void os2_smart_scan() {
                 }
             }
         }
+    }
+}
+void internal_test_task() {
+    while(1) {
+        // Direkter Video-RAM Zugriff (0xB8000 ist fast immer gemappt)
+        char* vga = (char*)0xB8000;
+        vga[0] = 'T'; // 'T' für Task
+        vga[1] = 0x0A; // Hellgrün
+        
+        // Pause, um die CPU nicht zu grillen
+        for(volatile int i = 0; i < 5000000; i++) {}
+        
+        // Abgeben
+        __asm__ volatile("int $0x80" : : "a"(0LL)); 
     }
 }
 /// ==========================================
@@ -83,30 +105,73 @@ Task tasks[4];
 int current_task = 0;      
 int num_tasks = 1;         
 
+// BARE METAL FIX: Eine Struktur, die exakt den Stack abbildet,
+// wie ihn deine pit_isr vor dem iretq erwartet!
+// BARE METAL FIX: Die 16 Bytes, die den Triple Fault verursacht haben!
+struct InterruptFrame {
+    // Exakt die 15 Register deiner Naked-ISR
+    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
+    uint64_t rdi, rsi, rbp, rbx, rdx, rcx, rax;
+    
+    // Die 5 Register, die iretq frisst
+    uint64_t rip;
+    uint64_t cs;
+    uint64_t rflags;
+    uint64_t rsp;
+    uint64_t ss;
+} __attribute__((packed));
+
 void create_task(void (*entry_point)()) {
-    if (num_tasks >= 4) return;
-    int id = num_tasks++;
-    tasks[id].active = true;
+    // 1. Timer anhalten, Lebensgefahr!
+    __asm__ volatile("cli"); 
     
-    /// BARE METAL FIX: Wir erzwingen eine saubere 16-Byte Ausrichtung für den neuen Stack!
-    uint64_t stack_base = (uint64_t)&tasks[id].stack[8192];
-    stack_base &= ~0xF; /// Die letzten 4 Bits auf 0 setzen (16-Byte Align)
-    
-    uint64_t* stack_top = (uint64_t*)stack_base;
-    
-    /// 64-Bit Hardware Interrupt-Frame für den 'iretq' Befehl
-    *(--stack_top) = 0x10;                  /// SS (Data Segment)
-    *(--stack_top) = stack_base;            /// RSP (Start-Stack des Tasks)
-    *(--stack_top) = 0x0202;                /// RFLAGS (Interrupts an)
-    *(--stack_top) = 0x08;                  /// CS (Kernel Code Segment)
-    *(--stack_top) = (uint64_t)entry_point; /// RIP (Wo soll das Programm starten?)
-    
-    /// Alle 15 großen 64-Bit Register für den Start nullen
-    for(int i = 0; i < 15; i++) {
-        *(--stack_top) = 0;
+    if (num_tasks >= 4) {
+        __asm__ volatile("sti");
+        return;
     }
     
-    tasks[id].rsp = (uint64_t)stack_top;
+    int id = num_tasks; 
+    
+    // ==========================================
+    // BARE METAL FIX: DER KUGELSICHERE STACK
+    // Keine .bss Arrays mehr! Wir nutzen 18 MB (0x01200000)
+    // Jeder Task bekommt 1 volles Megabyte Abstand.
+    // ==========================================
+    uint64_t stack_base = 0x01200000 + (id * 0x100000); 
+    stack_base &= ~0xF; // Perfektes 16-Byte Alignment
+    
+    InterruptFrame* frame = (InterruptFrame*)(stack_base - sizeof(InterruptFrame));
+    
+    // Alles mit Nullen füllen, um Müll aus dem RAM zu entfernen
+    uint8_t* frame_ptr = (uint8_t*)frame;
+    for (uint32_t i = 0; i < sizeof(InterruptFrame); i++) {
+        frame_ptr[i] = 0;
+    }
+    
+    // 64-Bit Variablen für die Segment-Register (verhindert 16-Bit Müll!)
+    uint64_t current_cs = 0, current_ss = 0;
+    __asm__ volatile("mov %%cs, %0" : "=r"(current_cs));
+    __asm__ volatile("mov %%ss, %0" : "=r"(current_ss));
+    
+    // Frame befüllen
+    frame->rip = (uint64_t)entry_point;
+    frame->cs = current_cs;        
+    frame->ss = current_ss;        
+    
+    // BARE METAL FIX: Absolut saubere Flags erzwingen! (IF=1, Reserved=1)
+    // Keine zufälligen Bits mehr aus dem Kernel übernehmen.
+    frame->rflags = 0x0202;  
+    
+    // Den Stack-Pointer für das C++ ABI auf -8 ausrichten
+    frame->rsp = stack_base - 8; 
+    
+    // Task eintragen und scharf schalten
+    tasks[id].rsp = (uint64_t)frame;
+    tasks[id].active = true;
+    num_tasks++; 
+    
+    // 2. Timer wieder an! Auf in die Schlacht!
+    __asm__ volatile("sti"); 
 }
 
 extern "C" uint64_t schedule(uint64_t old_rsp) {
@@ -433,11 +498,11 @@ struct IDTEntry {
 struct IDTPtr { uint16_t limit; uint64_t base; } __attribute__((packed));
 IDTEntry idt[256]; IDTPtr idt_ptr;
 
-void set_idt_gate(int n, uint64_t handler) { 
-    idt[n].offset_low = handler & 0xFFFF; 
-    idt[n].selector = 0x08; 
-    idt[n].ist = 0; 
-    idt[n].type_attr = 0x8E; 
+void set_idt_gate(int n, uint64_t handler, uint8_t flags = 0x8E) {
+    idt[n].offset_low = handler & 0xFFFF;
+    idt[n].selector = 0x08; // Kernel Code Segment
+    idt[n].ist = 0;
+    idt[n].type_attr = flags;
     idt[n].offset_mid = (handler >> 16) & 0xFFFF; 
     idt[n].offset_high = (handler >> 32) & 0xFFFFFFFF; 
     idt[n].zero = 0; 
@@ -596,6 +661,8 @@ int ahci_identify(uint32_t buffer_addr) {
 /// ==========================================
 /// BARE METAL FIX: SYSTEM CONTROL & INFO
 /// ==========================================
+// BARE METAL MAGIC: Compiler-reservierter RAM für den SATA-Chip
+__attribute__((aligned(4096))) uint8_t bare_metal_ahci_mem[0x10000];
 /// BARE METAL FIX: Brücke zur net.cpp für DHCP!
 extern "C" void send_dhcp_discover();
 extern _30 ip_address[32];
@@ -937,27 +1004,128 @@ _50 DrawOrganicPlanet(_43 cx, _43 cy, _43 radius, _89 base_col) {
         }
     }
 }
-/// Lädt eine Datei ab einem bestimmten LBA-Sektor in den RAM und startet sie
+// 1. Dein App-Fenster Puffer (mit volatile!)
+volatile uint32_t app_window_buffer[2500] = {0}; 
+volatile bool app_window_active = false;
+
+// 2. Deine kompilierte App als Hex-Array (Der echte Flummi)
+unsigned char app_bin[] = {
+  0xf3, 0x0f, 0x1e, 0xfa, 0xb8, 0x04, 0x00, 0x00, 0x00, 0xcd, 0x80, 0x48,
+  0x85, 0xc0, 0x0f, 0x84, 0x0c, 0x01, 0x00, 0x00, 0x41, 0x57, 0x49, 0x89,
+  0xc3, 0x41, 0xba, 0x01, 0x00, 0x00, 0x00, 0xbe, 0x05, 0x00, 0x00, 0x00,
+  0x41, 0x56, 0x41, 0xb9, 0x05, 0x00, 0x00, 0x00, 0x45, 0x31, 0xf6, 0x48,
+  0x8d, 0x88, 0x10, 0x27, 0x00, 0x00, 0x41, 0x55, 0x49, 0xc7, 0xc7, 0xfe,
+  0xff, 0xff, 0xff, 0x41, 0x54, 0x55, 0xbd, 0x01, 0x00, 0x00, 0x00, 0x53,
+  0x48, 0x89, 0xea, 0x48, 0x83, 0xec, 0x20, 0x90, 0x48, 0x89, 0xcf, 0x4c,
+  0x89, 0xd8, 0x4c, 0x29, 0xdf, 0x83, 0xe7, 0x04, 0x74, 0x12, 0x49, 0x8d,
+  0x43, 0x04, 0x41, 0xc7, 0x03, 0x00, 0x00, 0x00, 0x00, 0x48, 0x39, 0xc8,
+  0x74, 0x18, 0x66, 0x90, 0xc7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x83,
+  0xc0, 0x08, 0xc7, 0x40, 0xfc, 0x00, 0x00, 0x00, 0x00, 0x48, 0x39, 0xc8,
+  0x75, 0xea, 0x45, 0x6b, 0xe1, 0x32, 0x48, 0x89, 0x34, 0x24, 0x89, 0xf7,
+  0x44, 0x89, 0xcd, 0x4c, 0x89, 0x4c, 0x24, 0x08, 0x44, 0x8d, 0x6e, 0x04,
+  0x45, 0x8d, 0x41, 0x04, 0x83, 0xff, 0x31, 0x42, 0x8d, 0x34, 0x27, 0x89,
+  0xe8, 0x41, 0x0f, 0x96, 0xc1, 0x83, 0xf8, 0x31, 0x77, 0x12, 0x45, 0x84,
+  0xc9, 0x74, 0x0d, 0x48, 0x63, 0xde, 0x49, 0x8d, 0x1c, 0x9b, 0xc7, 0x03,
+  0x00, 0xff, 0x00, 0x00, 0x83, 0xc0, 0x01, 0x83, 0xc6, 0x32, 0x44, 0x39,
+  0xc0, 0x75, 0xde, 0x83, 0xc7, 0x01, 0x44, 0x39, 0xef, 0x75, 0xc9, 0x48,
+  0x8b, 0x34, 0x24, 0x4c, 0x8b, 0x4c, 0x24, 0x08, 0x4c, 0x01, 0xd6, 0x49,
+  0x01, 0xd1, 0x48, 0x85, 0xf6, 0x7e, 0x5a, 0x48, 0x83, 0xfe, 0x2e, 0x4d,
+  0x0f, 0x4d, 0xd7, 0x4d, 0x85, 0xc9, 0x7e, 0x46, 0x49, 0x83, 0xf9, 0x2e,
+  0x49, 0x0f, 0x4d, 0xd7, 0xc7, 0x44, 0x24, 0x1c, 0x00, 0x00, 0x00, 0x00,
+  0x8b, 0x44, 0x24, 0x1c, 0x3d, 0x4f, 0xc3, 0x00, 0x00, 0x7e, 0x11, 0x4c,
+  0x89, 0xf0, 0xcd, 0x80, 0xe9, 0x33, 0xff, 0xff, 0xff, 0x0f, 0x1f, 0x00,
+  0xf3, 0x90, 0xeb, 0xfc, 0xf3, 0x90, 0x8b, 0x44, 0x24, 0x1c, 0x83, 0xc0,
+  0x01, 0x89, 0x44, 0x24, 0x1c, 0x8b, 0x44, 0x24, 0x1c, 0x3d, 0x4f, 0xc3,
+  0x00, 0x00, 0x7e, 0xe8, 0xeb, 0xd5, 0xba, 0x02, 0x00, 0x00, 0x00, 0xeb,
+  0xbb, 0x41, 0xba, 0x02, 0x00, 0x00, 0x00, 0xeb, 0xa6
+};
+void diagnose_ahci_ports() {
+    if (global_ahci_abar == 0) {
+        str_cpy(cmd_status, "ERR: ABAR IST NULL");
+        return;
+    }
+
+    volatile uint32_t* abar = (volatile uint32_t*)global_ahci_abar;
+
+    // --- BARE METAL FIX: Nur aufwecken, wenn er WIRKLICH schläft! ---
+    // Wir prüfen erst, ob Bit 31 schon gesetzt ist (wie in QEMU).
+    if ((abar[0] & (1 << 31)) == 0) {
+        abar[0] = abar[0] | (1 << 31); // GHC.AE setzen
+        for(volatile int i=0; i<100000; i++); 
+    }
+
+    // Jetzt erst lesen wir PI (Offset 0x0C, Index 3)
+    uint32_t pi = abar[3]; 
+    // ==========================================
+    // TEST 1: KÖNNEN WIR DEN CHIP ÜBERHAUPT LESEN?
+    // ==========================================
+    if (pi == 0 || pi == 0xFFFFFFFF) {
+        // Wenn PI 0 ist, lesen wir leeren Arbeitsspeicher!
+        // Das bedeutet: Deine 64-Bit Page-Tables blockieren den Zugriff auf die Hardware.
+        str_cpy(cmd_status, "ERR: MMIO/PAGING BLOCKIERT (PI=0)");
+        return;
+    }
+    
+    int active_ports_count = 0;
+    
+    // ==========================================
+    // TEST 2: CHIP ANTWORTET, ABER WO IST DIE FESTPLATTE?
+    // ==========================================
+    for (int i = 0; i < 32; i++) {
+        if (pi & (1 << i)) { // Mainboard sagt: "Diesen Port gibt es physikalisch"
+            active_ports_count++;
+            
+            volatile uint32_t* port_regs = abar + 64 + (i * 32);
+            uint32_t ssts = port_regs[10]; // SATA Status Register
+            uint8_t det = ssts & 0x0F;     // Device Detection Bits
+            
+            if (det == 3) {
+                str_cpy(cmd_status, "HDD AUF PORT GEFUNDEN!");
+                return; 
+            }
+        }
+    }
+    
+    // Wenn er hier ankommt, hat er Ports gescannt, aber an keinem hing eine Platte!
+    if (active_ports_count > 0) {
+        str_cpy(cmd_status, "ERR: PORTS DA, ABER HDD FEHLT!");
+    } else {
+        str_cpy(cmd_status, "ERR: KEINE PORTS VORHANDEN");
+    }
+}
+unsigned int app_bin_len = 333;
+// Unser unzerstörbarer Puffer im Code-Segment
+__attribute__((section(".text"), aligned(4096))) uint8_t safe_app_buffer[65536] = {0};
+
+// 1. Die neue Multi-Read Funktion aus cosmos_ahci.cpp anmelden!
+extern _44 ahci_read_multi(HBA_PORT* port, _89 startlba, _43 count, _50* target_ram_address);
+
 bool load_and_run_bin(uint32_t start_lba, uint32_t sector_count) {
     if (num_tasks >= 4) return false;
     
-    // 1. Ziel-Adresse im RAM ermitteln (Dein Array aus dem Kernel)
-    uint32_t task_id = num_tasks;
-    uint8_t* target_ram = user_programs[task_id];
+    // Unser sicherer Hafen: 17 Megabyte
+    uint64_t target_ram = 0x01100000; 
+    uint8_t* ram = (uint8_t*)target_ram;
     
-    // 2. DIE ECHTEN DATEN LADEN
-    // (Hier musst du deinen bestehenden Festplatten-Lese-Befehl einfügen, 
-    // der die Sektoren in 'target_ram' schreibt. Zum Beispiel so:)
-    // ahci_read_sectors(get_active_ahci_port(), start_lba, sector_count, (unsigned long long)target_ram);
+    // 1. RAM sicher nullen
+    for(uint32_t i = 0; i < 65536; i++) {
+        ram[i] = 0;
+    }
     
-    // 3. BARE METAL FIX: DEN DATEN-BUNKER AUFSCHLIESSEN!
-    // Wir sagen der Memory Management Unit der CPU: "Achtung, das hier ist jetzt ausführbarer Code!"
-    // Wir berechnen die Größe der App in Bytes (Anzahl Sektoren * 512).
-    disable_nx_for_app((unsigned long long)target_ram, sector_count * 512);
+    // ==========================================
+    // BARE METAL FIX: DER FESTPLATTEN-BYPASS
+    // Wir ignorieren AHCI/USB und kopieren das 
+    // Hex-Array direkt in den ausführbaren Speicher!
+    // ==========================================
+    for(uint32_t i = 0; i < sizeof(app_bin); i++) {
+        ram[i] = app_bin[i];
+    }
     
-    // 4. TASK IN DEN SCHEDULER LADEN
-    // Wir casten die RAM-Adresse in einen Funktionspointer und feuern sie ab!
-    create_task((void(*)())target_ram);
+    // Status aktualisieren
+    str_cpy(cmd_status, "FLUMMI LOADED FROM RAM!");
+    
+    // 2. TASK STARTEN!
+    create_task((void (*)()) target_ram); 
     
     return true;
 }
@@ -986,6 +1154,15 @@ extern "C" uint64_t syscall_dispatcher(uint64_t sys_num, uint64_t arg1, uint64_t
     else if (sys_num == 1) { print_win(&windows[5], (char*)arg1); return 0; }
     else if (sys_num == 2) { uint64_t key = last_app_key; last_app_key = 0; return key; }
     else if (sys_num == 3) { Put(arg1, arg2, arg3); return 0; }
+    
+    // ==========================================
+    // BARE METAL FIX: Syscall 4 - RAM Fenster an App übergeben!
+    // ==========================================
+    else if (sys_num == 4) { 
+        app_window_active = true; 
+        return (uint64_t)(volatile void*)app_window_buffer; 
+    }
+    
     return 0;
 }
 
@@ -1305,11 +1482,10 @@ void process_cmd(char* input, Window* cmd_win) {
     /// ==========================================
     else if(str_equal(input, "RUNAPP")) {
         if (num_tasks < 4) {
-            /// Wir lesen 10 Sektoren (5120 Bytes) ab LBA 10000
-            load_and_run_bin(10000, 10);
+            // BARE METAL FIX: Wir starten den echten Hex-Code aus dem RAM!
+            create_task((void(*)())app_bin);
             
-            print_win(cmd_win, "LOADING .BIN FROM SATA SECTOR 10000...\n");
-            print_win(cmd_win, "PROGRAM EXECUTING IN TASK SCHEDULER!\n");
+            print_win(cmd_win, "LOADING APP DIRECTLY FROM KERNEL RAM...\n");
         } else {
             print_win(cmd_win, "ERROR: TASK LIMIT REACHED.\n");
         }
@@ -1334,12 +1510,70 @@ void sleep_ms(uint32_t ms) {
 }
 void background_task() {
     while(1) {
-        /// Dieser Task läuft völlig unsichtbar und parallel!
-        /// Hier können wir später Netzwerk-Scans oder Downloads ausführen,
-        /// ohne dass die Maus jemals ins Stocken gerät.
+        // Unsichtbare Aufgaben (später für Netzwerk, etc.)
         volatile int x = 0;
         x++;
+        
+        // Unbedingt abgeben, sonst frisst er 100% CPU!
+        __asm__ volatile("int $0x80" : : "a"(0LL)); 
     }
+}
+// --- GANZ OBEN IN DER DATEI (Außerhalb von main!) ---
+
+extern uint32_t global_ahci_abar;
+
+void bare_metal_port_init(int port_no) {
+    if (port_no < 0) return;
+    volatile uint32_t* abar = (volatile uint32_t*)global_ahci_abar;
+    volatile uint32_t* port_regs = abar + 64 + (port_no * 32); 
+    
+    // 1. Motor aus
+    port_regs[6] &= ~0x00000001; 
+    port_regs[6] &= ~0x00000010; 
+    
+    // ANTI-FREEZE: Notausgang nach 1.000.000 Zyklen!
+    int timeout = 1000000;
+    while ((port_regs[6] & (1 << 14)) && timeout--) { __asm__ volatile("pause"); }
+    timeout = 1000000;
+    while ((port_regs[6] & (1 << 15)) && timeout--) { __asm__ volatile("pause"); }
+
+    str_cpy(cmd_status, "PORT REBASE (64-BIT RAM)!");
+
+    // 2. WICHTIG: 64-Bit Variable nutzen
+    uint64_t base_addr = (uint64_t)&bare_metal_ahci_mem[0];
+    
+    // RAM komplett säubern
+    volatile char* mem = (volatile char*)base_addr;
+    for (int i = 0; i < 0x10000; i++) mem[i] = 0; 
+
+    // 3. Pointer berechnen
+    uint64_t clb = base_addr;
+    uint64_t fb  = base_addr + 0x1000;
+    uint64_t ctb = base_addr + 0x2000;
+    
+    // 4. BARE METAL MAGIC: Die 64-Bit Adresse in Low und High aufteilen
+    port_regs[0] = (uint32_t)(clb & 0xFFFFFFFF); 
+    port_regs[1] = (uint32_t)(clb >> 32);        
+    
+    port_regs[2] = (uint32_t)(fb & 0xFFFFFFFF);  
+    port_regs[3] = (uint32_t)(fb >> 32);         
+
+    volatile uint32_t* cmd_list = (volatile uint32_t*)clb;
+    cmd_list[0] = (1 << 16) | 5; 
+    cmd_list[1] = 0;
+    cmd_list[2] = (uint32_t)(ctb & 0xFFFFFFFF); 
+    cmd_list[3] = (uint32_t)(ctb >> 32);        
+    
+    // 5. Fehler löschen
+    port_regs[12] = 0xFFFFFFFF; 
+    port_regs[4]  = 0xFFFFFFFF; 
+    
+    // 6. Motor wieder an (Mit Anti-Freeze!)
+    timeout = 1000000;
+    while (((port_regs[8] & 0x88) != 0) && timeout--) { __asm__ volatile("pause"); }
+    
+    port_regs[6] |= 0x00000010; 
+    port_regs[6] |= 0x00000001; 
 }
 /// 6. DER HAUPT-EINSTIEG 
 /// ==========================================
@@ -1355,12 +1589,15 @@ extern "C" void main(BootInfo* sys_info) {
     
     for(int i = 0; i < 256; i++) set_idt_gate(i, 0);
     
-    set_idt_gate(32, (uint64_t)pit_isr);      
-    set_idt_gate(33, (uint64_t)keyboard_isr); 
-    set_idt_gate(39, (uint64_t)dummy_isr);
+    // BARE METAL FIX: Der Airbag! Fange alle Hardware-Fehler ab!
+    for(int i = 0; i < 32; i++) {
+        set_idt_gate(i, (uint64_t)dummy_isr);
+    }
     
-	/// NEU: Der Türsteher für externe Programme!
-    set_idt_gate(0x80, (uint64_t)syscall_isr);
+    set_idt_gate(32, (uint64_t)pit_isr);      
+    set_idt_gate(33, (uint64_t)keyboard_isr);
+	set_idt_gate(0x80, (uint64_t)syscall_isr, 0xEE); // BARE METAL FIX: 0xEE erlaubt der App den Zugriff!	
+    set_idt_gate(39, (uint64_t)dummy_isr);
 	
     remap_pic();
     init_pit(1000); 
@@ -1369,11 +1606,13 @@ extern "C" void main(BootInfo* sys_info) {
     
     /// TASK MANAGER INITIALISIEREN
     tasks[0].active = true;         /// Wir deklarieren Cosmos OS als Task 0
-    create_task(background_task);   /// Wir feuern unseren ersten echten Hintergrund-Task ab!
+	create_task(internal_test_task);
+    //create_task(background_task);   /// Wir feuern unseren ersten echten Hintergrund-Task ab!
     __asm__ volatile("sti"); /// ZÜNDUNG: Multitasking beginnt!
     /// ==========================================
     /// DEIN ORIGINAL-CODE STARTET AB HIER WIEDER:
     /// ==========================================
+	// Irgendwo in deiner Hintergrund-Schleife (z.B. nach dem Zeichnen der Sterne):
     read_rtc();
     get_cpu_brand();
     usb_mouse_callback = update_mouse_position;
@@ -1406,6 +1645,7 @@ extern "C" void main(BootInfo* sys_info) {
     str_cpy(windows[10].title, "GERAETE MGR"); windows[10].x=100; windows[10].y=80; windows[10].w=600; windows[10].h=450; windows[10].color=0x111111;
     str_cpy(windows[11].title, "ARCADE: PONG"); windows[11].x=200; windows[11].y=150; windows[11].w=450; windows[11].h=300; windows[11].color=0x112211;
     str_cpy(windows[12].title, "ARCADE: BLOBBY"); windows[12].x=250; windows[12].y=100; windows[12].w=450; windows[12].h=300; windows[12].color=0x4488FF;
+	
     /// BARE METAL FIX: Alle Orakel-Variablen sofort befüllen!
 	scan_pci_drives(&windows[4]);
     
@@ -2076,8 +2316,15 @@ extern "C" void main(BootInfo* sys_info) {
                                 _15(dir[i].type == 0) {
                                     dir[i].type = 1; dir[i].file_size = 5120; dir[i].start_lba = 10000;
                                     _39(int n=0; n<11; n++) { dir[i].filename[n] = 0; cfs_files[i].name[n] = 0; }
-                                    str_cpy(dir[i].filename, "APP.BIN"); str_cpy(cfs_files[i].name, "APP.BIN");
-                                    ahci_write_sectors(1002, (uint32_t)buf_dir);
+                                    str_cpy(dir[i].filename, "APP.BIN"); 
+									str_cpy(cfs_files[i].name, "APP.BIN");
+									
+									// BARE METAL FIX: UI-Puffer aktualisieren, sonst lädt OPEN den falschen Sektor!
+									cfs_files[i].start_lba = 10000;
+									cfs_files[i].size = 5120;
+									cfs_files[i].is_folder = _86;
+									
+									ahci_write_sectors(1002, (uint64_t)buf_dir);
                                     _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("pause");
                                     cfs_files[i].exists = 1; cfs_files[i].size = 5120; cfs_files[i].start_lba = 10000;
                                     _37;
@@ -2274,11 +2521,23 @@ extern "C" void main(BootInfo* sys_info) {
                                 } _41 {
                                     _44 is_bin = _86;
                                     _39(int c=0; c<11; c++) { if(cfs_files[i].name[c] == 'B' && cfs_files[i].name[c+1] == 'I' && cfs_files[i].name[c+2] == 'N') is_bin = _128; }
-                                    
+                                    _15(selected_drive_idx != 99) {
+										active_sata_port = detected_ports[selected_drive_idx];
+										ahci_read_sectors(1002, (uint32_t)buf_dir);
+										_39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("pause");
+									}
                                     _15(is_bin) {
                                         print_win(win, "\n[SYS] LOADING BINARY APP...\n");
-                                        if (load_and_run_bin(cfs_files[i].start_lba, 10)) { print_win(win, "[SYS] TASK SPAWNED!\n"); } 
-                                        else { print_win(win, "[ERR] HDD TIMEOUT.\n"); }
+                                        
+                                        /// BARE METAL FIX: Nur EINMAL laden! 
+                                        /// Kein Rebase-Müll, kein doppeltes Überschreiben!
+                                        if (load_and_run_bin(cfs_files[i].start_lba, 10)) {
+                                            print_win(win, "[SYS] TASK SPAWNED!\n"); 
+                                        } else { 
+                                            print_win(win, "[ERR] LOAD FAILED!\nGRUND: "); 
+                                            print_win(win, cmd_status); 
+                                            print_win(win, "\n");
+                                        }
                                     } _41 {
                                         print_win(win, "\n[SYS] OPENING IN NOTEPAD...\n");
                                         windows[0].open = _128; windows[0].minimized = _86; focus_window(0);
@@ -2754,12 +3013,32 @@ extern "C" void main(BootInfo* sys_info) {
                 Text(550, ry, mirror_list[i].name, 0xCCCCCC, _86);
                 ry += 14;
             }
+			
             /// Mit ESC schließen (Scancode 1)
             if (key_scancode == 0x01) {
                 show_oracle = false;
                 key_scancode = 0; /// Taste konsumieren
             }
         }
+		// =========================================================================
+		// 4. BARE METAL FIX: DER APP-PUFFER MUSS HIER HIN! (Nach den Fenstern!)
+		// =========================================================================
+		if (app_window_active) {
+			uint32_t win_start_x = 100; // Position des Fensters auf dem Desktop
+			uint32_t win_start_y = 100;
+			
+			for (int y = 0; y < 50; y++) {
+				for (int x = 0; x < 50; x++) {
+					// Den flüchtigen RAM auslesen (wird von app.bin befüllt)
+					uint32_t pixel_color = app_window_buffer[y * 50 + x];
+					
+					// 0x000000 ist transparent! Wenn es eine andere Farbe ist, zeichnen wir!
+					if (pixel_color != 0) { 
+						Put(win_start_x + x, win_start_y + y, pixel_color);
+					}
+				}
+			}
+		}
         DrawAeroCursor(mouse_x, mouse_y);
         Swap(); 
         frame++;

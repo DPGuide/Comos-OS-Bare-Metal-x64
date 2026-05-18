@@ -653,7 +653,7 @@ _50 xhci_configure_endpoints(_184 slot_id, _89 speed) {
 /// ==========================================
 _43 xhci_bot_get_capacity(_184 slot_id) {
     _89* cbw_ram = (_89*)0x040B0000;
-    _39(_43 i=0; i<8; i++) cbw_ram[i] = 0;
+    _39(_43 i=0; i<28; i++) cbw_ram[i] = 0;
     
     cbw_ram[0] = 0x43425355; cbw_ram[1] = 0x02; cbw_ram[2] = 8; cbw_ram[3] = 0x0A000080;
     _184* scsi_cmd = (_184*)(cbw_ram + 3) + 3; scsi_cmd[0] = 0x25;
@@ -693,7 +693,7 @@ _43 xhci_bot_get_capacity(_184 slot_id) {
 /// ==========================================
 _44 xhci_bot_read_sectors(_184 slot_id, uint32_t lba, uint64_t dest_ram) {
     _89* cbw_ram = (_89*)0x040B0000; _89* csw_ram = (_89*)0x040D0000;
-    _39(_43 i=0; i<8; i++) { cbw_ram[i] = 0; csw_ram[i] = 0; }
+    _39(_43 i=0; i<28; i++) { cbw_ram[i] = 0; csw_ram[i] = 0; }
     
     cbw_ram[0] = 0x43425355; cbw_ram[1] = 0x03; cbw_ram[2] = 512; cbw_ram[3] = 0x0A000080;
     _184* scsi_cmd = (_184*)(cbw_ram + 3) + 3; scsi_cmd[0] = 0x28;
@@ -739,7 +739,7 @@ _44 xhci_bot_read_sectors(_184 slot_id, uint32_t lba, uint64_t dest_ram) {
 /// ==========================================
 _44 xhci_bot_write_sectors(_184 slot_id, uint32_t lba, uint64_t src_ram) {
     _89* cbw_ram = (_89*)0x040B0000; _89* csw_ram = (_89*)0x040D0000;
-    _39(_43 i=0; i<8; i++) { cbw_ram[i] = 0; csw_ram[i] = 0; }
+    _39(_43 i=0; i<28; i++) { cbw_ram[i] = 0; csw_ram[i] = 0; }
     
     cbw_ram[0] = 0x43425355; cbw_ram[1] = 0x04; cbw_ram[2] = 512; cbw_ram[3] = 0x0A000000; /// OUT!
     _184* scsi_cmd = (_184*)(cbw_ram + 3) + 3; scsi_cmd[0] = 0x2A; /// WRITE 10
@@ -825,7 +825,7 @@ void system_init_usb() {
     
     for(uint32_t b=0; b<256 && !found; b++) {
         for(uint32_t d=0; d<32 && !found; d++) {
-            for(uint32_t f=0; f<8 && !found; f++) {
+            for(uint32_t f=0; f<28 && !found; f++) {
                 uint32_t id = pci_read(b,d,f,0);
                 if ((id & 0xFFFF) != 0xFFFF) {
                     uint32_t cls = pci_read(b,d,f,0x08);
