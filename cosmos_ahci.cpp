@@ -1057,20 +1057,32 @@ _44 ahci_read_multi(HBA_PORT *port, _89 startlba, _43 count, _50 *target_ram_add
     }
     _15 (slot == 32) _96 0;
     
-    HBA_CMD_HEADER *cmdheader = (HBA_CMD_HEADER*)port->clb;
+    // ==========================================
+    // BARE METAL FIX 1: 64-BIT POINTER FÜR CLB
+    // Wir rekonstruieren die volle Hardware-Adresse!
+    // ==========================================
+    uint64_t clb_addr = port->clb;
+    clb_addr |= ((uint64_t)port->clbu << 32);
+    HBA_CMD_HEADER *cmdheader = (HBA_CMD_HEADER*)clb_addr;
+    
     cmdheader += slot;
     cmdheader->cfl = _64(FIS_REG_H2D)/_64(_89); 
     cmdheader->w = 0; 
     cmdheader->prdtl = 1;
     
-    HBA_CMD_TBL *cmdtbl = (HBA_CMD_TBL*)(cmdheader->ctba);
+    // ==========================================
+    // BARE METAL FIX 2: 64-BIT POINTER FÜR CTBA
+    // ==========================================
+    uint64_t ctba_addr = cmdheader->ctba;
+    ctba_addr |= ((uint64_t)cmdheader->ctbau << 32);
+    HBA_CMD_TBL *cmdtbl = (HBA_CMD_TBL*)ctba_addr;
+    
     _39 (_43 i=0; i<_64(HBA_CMD_TBL) + (cmdheader->prdtl-1)*_64(HBA_PRDT_ENTRY); i++) {
         ((_184*)cmdtbl)[i] = 0;
     }
     
     cmdtbl->prdt_entry[0].dba = (_89)(uint64_t)target_ram_address;
     cmdtbl->prdt_entry[0].dbau = (_89)(((uint64_t)target_ram_address) >> 32); 
-    // BARE METAL FIX: Wir lesen "count" Sektoren auf einmal!
     cmdtbl->prdt_entry[0].dbc = ((count * 512) - 1) | (1 << 31);
     
     FIS_REG_H2D *cmdfis = (FIS_REG_H2D*)(&cmdtbl->cfis);
@@ -1084,31 +1096,46 @@ _44 ahci_read_multi(HBA_PORT *port, _89 startlba, _43 count, _50 *target_ram_add
     cmdfis->lba3 = (_184)(startlba >> 24);
     cmdfis->lba4 = 0;        
     cmdfis->lba5 = 0;
-    // BARE METAL FIX: Sektor-Anzahl in den FIS-Header schreiben!
     cmdfis->countl = count & 0xFF;      
     cmdfis->counth = (count >> 8) & 0xFF;
     
     _43 spin = 0;
-    _114 ((port->tfd & (0x80 | 0x08)) && spin < 10000000) { 
+    // ==========================================
+    // BARE METAL FIX 3: TIMEOUT 100x VERGRÖSSERN
+    // Wir geben der Hardware die Zeit, die sie braucht!
+    // (10 Millionen -> 1 Milliarde)
+    // ==========================================
+    _114 ((port->tfd & (0x80 | 0x08)) && spin < 1000000000) { 
         __asm__ _192("pause"); 
         spin++; 
     }
-    _15 (spin >= 10000000) _96 0;
+    _15 (spin >= 1000000000) _96 0;
     
     __asm__ _192("wbinvd" ::: "memory");
     
     port->ci = 1 << slot;
     
     _43 wait_spin = 0;
-    _114 (wait_spin < 10000000) {
+    // ==========================================
+    // BARE METAL FIX 4: LESE-TIMEOUT VERGRÖSSERN
+    // ==========================================
+    _114 (wait_spin < 1000000000) {
         __asm__ _192("pause");
         _15 ((port->ci & (1 << slot)) == 0) _37;
         _15 (port->is & (1<<30)) _96 0;
         wait_spin++;
     }
     
-    __asm__ _192("wbinvd" ::: "memory");
+   __asm__ _192("wbinvd" ::: "memory");
     
-    _15 (wait_spin >= 10000000) _96 0;
+    _15 (wait_spin >= 1000000000) _96 0;
+    
+    // ==========================================
+    // BARE METAL FIX: DEN CONTROLLER WIEDER FREIGEBEN!
+    // Löscht alle Interrupt-Flags, damit der nächste 
+    // Lesebefehl nicht blockiert wird!
+    // ==========================================
+    port->is = (_89)-1; 
+    
     _96 1; 
 }

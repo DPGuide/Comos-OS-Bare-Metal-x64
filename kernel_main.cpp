@@ -5,6 +5,13 @@
 #include "arcade.h"
 #include <stdint.h>
 #include <stddef.h>
+// --- GLOBALE BILDSCHIRM-VARIABLEN ---
+uint32_t screen_w = 800;
+uint32_t screen_h = 600;
+uint32_t screen_pitch = 800 * 4; 
+uint32_t* fb = nullptr; // Dein echter Framebuffer
+uint32_t* bb = (uint32_t*)0x02000000;
+
 bool is_app_running = false;
 // --- BARE METAL EXTERNS ---
 // Sag der kernel_main.cpp, dass diese Variable in der cosmos_ahci.cpp existiert!
@@ -120,6 +127,14 @@ struct InterruptFrame {
     uint64_t rsp;
     uint64_t ss;
 } __attribute__((packed));
+void sys_idle_task() {
+    while(1) {
+        // Hier kannst du Dinge tun, die immer laufen sollen,
+        // auch wenn keine App geladen ist.
+        // Wenn du nichts tun willst:
+        __asm__ volatile("hlt"); // CPU schlafen legen, bis ein Interrupt kommt
+    }
+}
 
 void create_task(void (*entry_point)()) {
     // 1. Timer anhalten, Lebensgefahr!
@@ -356,8 +371,7 @@ _50 read_rtc() {
 /// ==========================================
 /// 4. ENGINE GLOBALS & DATA STRUCTURES
 /// ==========================================
-_89* fb = 0; _89* bb = (_89*)0x02000000;
-_89 screen_w = 800, screen_h = 600, frame = 0;
+uint32_t frame = 0;
 _43 mouse_x = 400, mouse_y = 300; _44 mouse_down = _86, mouse_just_pressed = _86;
 int mouse_sub_x = 40000;
 int mouse_sub_y = 30000;
@@ -863,9 +877,109 @@ _50 handle_input() {
 /// ==========================================
 /// 5. GRAPHICS ENGINE & SHADER 
 /// ==========================================
+// ==========================================
+// COSMOS GL - BARE METAL 3D ENGINE V1
+// ==========================================
+
+// 1. STRUKTUREN (Der Raum)
+struct Vec3 { float x, y, z; };
+struct Vec2 { int x, y; };
+// ==========================================
+// BARE METAL TRIGONOMETRIE (x87 FPU)
+// ==========================================
+float bare_sin(float x) {
+    float res;
+    __asm__ volatile("fsin" : "=t"(res) : "0"(x));
+    return res;
+}
+
+float bare_cos(float x) {
+    float res;
+    __asm__ volatile("fcos" : "=t"(res) : "0"(x));
+    return res;
+}
+
+// ==========================================
+// 3D ROTATION (Matrix-Multiplikation Light)
+// ==========================================
+Vec3 RotateY(Vec3 p, float angle) {
+    float s = bare_sin(angle);
+    float c = bare_cos(angle);
+    return { p.x * c - p.z * s, p.y, p.x * s + p.z * c };
+}
+
+Vec3 RotateX(Vec3 p, float angle) {
+    float s = bare_sin(angle);
+    float c = bare_cos(angle);
+    return { p.x, p.y * c - p.z * s, p.y * s + p.z * c };
+}
+
+// 2. GLOBALE KAMERA
+float camera_fov = 500.0f;     
+float camera_z_offset = 4.0f;  
+
+// 3. PIXEL-ZEICHNER (Mit Hardware-Pitch-Schutz!)
+void PutPixel(uint32_t x, uint32_t y, uint32_t color) {
+    if (x >= screen_w || y >= screen_h) return; 
+    uint8_t* pixel_addr = (uint8_t*)bb + (y * screen_pitch) + (x * 4);
+    *(uint32_t*)pixel_addr = color;
+}
+
+// 4. PROJEKTION (3D Welt -> 2D Monitor)
+Vec2 Project3D(Vec3 point) {
+    float z = point.z + camera_z_offset;
+    if (z <= 0.1f) return { -1, -1 }; 
+    
+    float projected_x = (point.x / z) * camera_fov;
+    float projected_y = (point.y / z) * camera_fov;
+    
+    int screen_x = (int)(screen_w / 2) + projected_x;
+    int screen_y = (int)(screen_h / 2) - projected_y; 
+    return { screen_x, screen_y };
+}
+
+// 5. 2D-LINIEN-ZEICHNER (Bresenham Algorithmus)
+void DrawLine(int x0, int y0, int x1, int y1, uint32_t color) {
+    int dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
+    int dy = (y1 > y0) ? (y1 - y0) : (y0 - y1);
+    int sx = (x0 < x1) ? 1 : -1;
+    int sy = (y0 < y1) ? 1 : -1;
+    int err = (dx > dy ? dx : -dy) / 2, e2;
+
+    for (;;) {
+        PutPixel(x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        e2 = err;
+        if (e2 > -dx) { err -= dy; x0 += sx; }
+        if (e2 < dy) { err += dx; y0 += sy; }
+    }
+}
+
+// 6. 3D-LINIEN-ZEICHNER (Die Brücke zwischen 3D und 2D)
+void DrawLine3D(Vec3 p1, Vec3 p2, uint32_t color) {
+    Vec2 v1 = Project3D(p1);
+    Vec2 v2 = Project3D(p2);
+    if (v1.x != -1 && v2.x != -1) {
+        DrawLine(v1.x, v1.y, v2.x, v2.y, color);
+    }
+}
 _50 Put(_43 x, _43 y, _89 c) { _15(x<0 OR x>=800 OR y<0 OR y>=600) _96; bb[y*800+x]=c; }
 _50 PutAlpha(_43 x, _43 y, _89 c) { _15(x<0 OR x>=800 OR y<0 OR y>=600) _96; _89 bg = bb[y*800+x]; _89 s1 = ((c & 0xFEFEFE) >> 1) + ((bg & 0xFEFEFE) >> 1); bb[y*800+x] = ((s1 & 0xFEFEFE) >> 1) + ((bg & 0xFEFEFE) >> 1); }
-_50 Swap() { _39(_43 i=0; i<800*600; i++) fb[i] = bb[i]; }
+_50 Swap() {
+    // ==========================================
+    // BARE METAL TURBO: 64-BIT MEMORY COPY
+    // Kopiert 8 Bytes pro Taktzyklus statt nur 1 Byte!
+    // ==========================================
+    uint64_t* dst = (uint64_t*)fb;
+    uint64_t* src = (uint64_t*)bb;
+    
+    // Gesamtanzahl der 64-Bit Blöcke berechnen
+    uint32_t total_blocks = (screen_h * screen_pitch) / 8;
+    
+    for (uint32_t i = 0; i < total_blocks; i++) {
+        dst[i] = src[i];
+    }
+}
 _50 DrawRoundedRect(_43 x, _43 y, _43 rw, _43 rh, _43 r, _89 c) { _39(_43 iy=0;iy<rh;iy++)_39(_43 ix=0;ix<rw;ix++){ _44 corn=_86; _15(ix<r AND iy<r AND (r-ix)*(r-ix)+(r-iy)*(r-iy)>r*r) corn=_128; _15(ix>rw-r AND iy<r AND (ix-(rw-r))*(ix-(rw-r))+(r-iy)*(r-iy)>r*r) corn=_128; _15(ix<r AND iy>rh-r AND (r-ix)*(r-ix)+(iy-(rh-r))*(iy-(rh-r))>r*r) corn=_128; _15(ix>rw-r AND iy>rh-r AND (ix-(rw-r))*(ix-(rw-r))+(iy-(rh-r))*(iy-(rh-r))>r*r) corn=_128; _15(!corn) Put(x+ix,y+iy,c); } }
 _50 DrawGlassRect(_43 x, _43 y, _43 rw, _43 rh, _43 r, _89 c) { 
     _43 cr = (c >> 16) & 0xFF; _43 cg = (c >> 8) & 0xFF; _43 cb = c & 0xFF;
@@ -952,24 +1066,99 @@ _50 DrawDenseGalaxy(_43 cx, _43 cy, _43 exp) {
         bb[py * 800 + px] = (f_r << 16) | (f_g << 8) | f_b;
     }
 }
-_50 DrawGoldenSun(_43 cx, _43 cy, _43 radius) {
-    _43 r2 = radius * radius; _43 glow_radius = radius + 15; _43 glow_r2 = glow_radius * glow_radius;
-    _39(_43 y = -glow_radius; y <= glow_radius; y++) {
-        _39(_43 x = -glow_radius; x <= glow_radius; x++) {
-            _43 dist_sq = x*x + y*y; _43 screen_x = cx + x; _43 screen_y = cy + y;
-            _15(screen_x < 0 OR screen_x >= 800 OR screen_y < 0 OR screen_y >= 600) _101;
-            _15(dist_sq <= r2) {
-                _43 nz = int_sqrt(r2 - dist_sq) * 255 / radius; _43 hx = x + (radius / 3); _43 hy = y + (radius / 3);
-                _43 highlight = 0; _15(int_sqrt(hx*hx + hy*hy) < radius) { highlight = 255 - (int_sqrt(hx*hx + hy*hy) * 255 / radius); highlight = (highlight * highlight) / 255; }
-                _43 r = (nz * 255) / 255; _43 g = (nz * 170) / 255; _43 b = (nz * 20) / 255;  
-                r += highlight; _15(r > 255) r = 255; g += highlight; _15(g > 255) g = 255; b += (highlight / 2); _15(b > 255) b = 255;
-                bb[screen_y * 800 + screen_x] = (r << 16) | (g << 8) | b;
-            } _41 _15 (dist_sq <= glow_r2 AND dist_sq > r2) {
-                _43 alpha = 255 - ((int_sqrt(dist_sq) - radius) * 255 / (glow_radius - radius)); alpha = (alpha * alpha) / 255;
-                _15(alpha > 0) {
-                    _89 bg = bb[screen_y * 800 + screen_x];
-                    _43 final_r = (255 * alpha + ((bg >> 16) & 0xFF) * (255 - alpha)) / 255; _43 final_g = (120 * alpha + ((bg >> 8) & 0xFF) * (255 - alpha)) / 255; _43 final_b = (0 * alpha + (bg & 0xFF) * (255 - alpha)) / 255;
-                    bb[screen_y * 800 + screen_x] = (final_r << 16) | (final_g << 8) | final_b;
+_50 DrawActiveSun(_43 cx, _43 cy, _43 radius) {
+    _43 r2 = radius * radius; 
+    _43 glow_radius = radius + 40; // Mehr Platz für lange, spitze Feuerstrahlen!
+    _43 glow_r2 = glow_radius * glow_radius;
+    
+    _43 start_y = -glow_radius; _43 end_y = glow_radius;
+    _43 start_x = -glow_radius; _43 end_x = glow_radius;
+    
+    _15(cy + start_y < 0) start_y = -cy;
+    _15(cy + end_y >= screen_h) end_y = screen_h - 1 - cy;
+    _15(cx + start_x < 0) start_x = -cx;
+    _15(cx + end_x >= screen_w) end_x = screen_w - 1 - cx;
+
+    float time = frame * 0.05f;
+    float s_time = bare_sin(time);
+    float c_time = bare_cos(time);
+    float boil_offset = frame * 0.2f; 
+
+    _39(_43 y = start_y; y <= end_y; y++) {
+        _43 screen_y = cy + y;
+        uint32_t* row_ptr = (uint32_t*)((uint8_t*)bb + (screen_y * screen_pitch));
+
+        _39(_43 x = start_x; x <= end_x; x++) {
+            _43 dist_sq = x*x + y*y; 
+            _15(dist_sq <= glow_r2) {
+                _43 screen_x = cx + x; 
+                uint32_t* pixel = &row_ptr[screen_x]; 
+
+                _15(dist_sq <= r2) {
+                    // ==========================================
+                    // DER KERN (Drehendes Magma)
+                    // ==========================================
+                    _43 z = int_sqrt(r2 - dist_sq);
+                    float rx = x * c_time - z * s_time;
+                    float rz = x * s_time + z * c_time;
+                    
+                    _43 nz = (z * 255) / radius; 
+                    _43 r = nz; 
+                    _43 g = (nz * 170) / 255; 
+                    _43 b = (nz * 20) / 255;  
+                    
+                    *pixel = (r << 16) | (g << 8) | b; 
+                } _41 {
+                    // ==========================================
+                    // BARE METAL FIX: RADIALE FEUERSTRAHLEN!
+                    // ==========================================
+                    _43 dist = int_sqrt(dist_sq);
+                    
+                    // 1. Demoscene-Trick: "Pseudo-Winkel" (0 bis 8) rasend schnell berechnen!
+                    float px = (float)x; float py = (float)y;
+                    float ax = (px > 0) ? px : -px;
+                    float ay = (py > 0) ? py : -py;
+                    float p_angle = 0;
+                    
+                    if (ax > ay) p_angle = ay / (ax + 0.0001f);
+                    else p_angle = 2.0f - ax / (ay + 0.0001f);
+                    
+                    if (px < 0 && py >= 0) p_angle = 4.0f - p_angle;
+                    else if (px < 0 && py < 0) p_angle = 4.0f + p_angle;
+                    else if (px >= 0 && py < 0) p_angle = 8.0f - p_angle;
+                    
+                    // 2. Erzeuge radiale Spikes durch Überlagerung von Sinus-Wellen auf dem Winkel!
+                    // p_angle * 12.0f steuert die ANZAHL der Strahlen.
+                    float wave1 = bare_sin(p_angle * 12.0f + time * 3.0f);
+                    float wave2 = bare_cos(p_angle * 7.0f - boil_offset);
+                    float flare = wave1 * wave2; 
+                    
+                    if (flare < 0) flare = 0; // Spitzen dürfen nur nach außen wachsen, nicht nach innen!
+                    
+                    // 3. Spikes bis zu 25 Pixel nach außen schießen lassen!
+                    _43 dynamic_glow = radius + 2 + (int)(flare * 25.0f);
+                    
+                    // Sicherheitsnetz gegen CPU-Freezes (Div/0)
+                    _15(dynamic_glow <= radius) dynamic_glow = radius + 1; 
+                    
+                    _15 (dist <= dynamic_glow) {
+                        _43 divisor = dynamic_glow - radius;
+                        _43 alpha = 255 - ((dist - radius) * 255 / divisor); 
+                        alpha = (alpha * alpha) / 255; // Macht die Flammen spitzenmäßig scharf!
+                        
+                        _15(alpha > 0) {
+                            uint32_t bg = *pixel; 
+                            
+                            // ==========================================
+                            // ECHTES FEUER (255 Rot, 120 Grün, 0 Blau)
+                            // ==========================================
+                            _43 final_r = (255 * alpha + ((bg >> 16) & 0xFF) * (255 - alpha)) / 255; 
+                            _43 final_g = (120 * alpha + ((bg >> 8) & 0xFF) * (255 - alpha)) / 255; 
+                            _43 final_b = (  0 * alpha + (bg & 0xFF) * (255 - alpha)) / 255;
+                            
+                            *pixel = (final_r << 16) | (final_g << 8) | final_b;
+                        }
+                    }
                 }
             }
         }
@@ -1103,31 +1292,52 @@ extern _44 ahci_read_multi(HBA_PORT* port, _89 startlba, _43 count, _50* target_
 bool load_and_run_bin(uint32_t start_lba, uint32_t sector_count) {
     if (num_tasks >= 4) return false;
     
-    // Unser sicherer Hafen: 17 Megabyte
     uint64_t target_ram = 0x01100000; 
     uint8_t* ram = (uint8_t*)target_ram;
     
-    // 1. RAM sicher nullen
-    for(uint32_t i = 0; i < 65536; i++) {
-        ram[i] = 0;
+    HBA_MEM* hba = (HBA_MEM*)active_ahci_bar5;
+    if (hba == nullptr) return false;
+
+    str_cpy(cmd_status, "LADE FLUMMI...");
+
+    HBA_PORT* port = &hba->ports[active_sata_port];
+
+    for(uint32_t i=0; i < 512 * sector_count; i++) ram[i] = 0;
+    
+    // Wir lesen DIREKT von LBA 10000. Kein Radar mehr nötig!
+    if (ahci_read_multi(port, start_lba, sector_count, (void*)target_ram) == 0) {
+        str_cpy(cmd_status, "ERR: LESEFEHLER!");
+        return false;
     }
     
     // ==========================================
-    // BARE METAL FIX: DER FESTPLATTEN-BYPASS
-    // Wir ignorieren AHCI/USB und kopieren das 
-    // Hex-Array direkt in den ausführbaren Speicher!
+    // BARE METAL FIX: CPU CACHE & TLB FLUSH
+    // Zwingt die echte CPU, den Code zu akzeptieren und verhindert Freezes!
     // ==========================================
-    for(uint32_t i = 0; i < sizeof(app_bin); i++) {
-        ram[i] = app_bin[i];
+    __asm__ volatile("wbinvd" ::: "memory");
+    
+    disable_nx_for_app(target_ram, 8192); 
+    
+    __asm__ volatile(
+        "mov %%cr3, %%rax \n"
+        "mov %%rax, %%cr3 \n"
+        ::: "rax", "memory"
+    );
+    
+    // ==========================================
+    // SIGNATUR PRÜFEN
+    // ==========================================
+    if (ram[0] == 0xF3 && ram[1] == 0x0F && ram[2] == 0x1E && ram[3] == 0xFA) {
+        
+        create_task((void (*)()) target_ram); 
+        is_app_running = true; 
+        
+        str_cpy(cmd_status, "BINGO! FLUMMI LÄUFT!");
+        return true;
     }
     
-    // Status aktualisieren
-    str_cpy(cmd_status, "FLUMMI LOADED FROM RAM!");
-    
-    // 2. TASK STARTEN!
-    create_task((void (*)()) target_ram); 
-    
-    return true;
+    str_cpy(cmd_status, "ERR: FALSCHE SIGNATUR AUF DISK!");
+    return false; 
 }
 /// ==========================================
 /// BARE METAL FIX: CMD Processor & App Toggles
@@ -1575,11 +1785,22 @@ void bare_metal_port_init(int port_no) {
     port_regs[6] |= 0x00000010; 
     port_regs[6] |= 0x00000001; 
 }
+
 /// 6. DER HAUPT-EINSTIEG 
 /// ==========================================
-extern "C" void main(BootInfo* sys_info) {
+extern "C" void main(BootInfo* boot_info) {
+    
+    // Ab hier ist float erlaubt!
     init_heap();
-    fb = (_89*)(uint64_t)sys_info->framebuffer_addr;
+	screen_w     = boot_info->screen_width;      
+    screen_h     = boot_info->screen_height;
+    screen_pitch = boot_info->framebuffer_pitch; 
+    fb           = (uint32_t*)(uint64_t)boot_info->framebuffer_addr;
+
+    if (screen_pitch == 0) {
+        screen_pitch = screen_w * 4; 
+    }
+    //fb = (_89*)(uint64_t)sys_info->framebuffer_addr;
 
     /// ==========================================
     /// 1. IDT (Interrupts) SAUBER AUFBAUEN
@@ -1606,7 +1827,9 @@ extern "C" void main(BootInfo* sys_info) {
     
     /// TASK MANAGER INITIALISIEREN
     tasks[0].active = true;         /// Wir deklarieren Cosmos OS als Task 0
-	create_task(internal_test_task);
+	// Anstatt des Test-Tasks starten wir jetzt einen sauberen Hintergrund-Task
+    // Dieser Task kümmert sich um System-Metriken (z.B. Zeit, CPU-Last, etc.)
+	create_task(sys_idle_task);
     //create_task(background_task);   /// Wir feuern unseren ersten echten Hintergrund-Task ab!
     __asm__ volatile("sti"); /// ZÜNDUNG: Multitasking beginnt!
     /// ==========================================
@@ -1953,7 +2176,8 @@ extern "C" void main(BootInfo* sys_info) {
         _15(galaxy_open AND galaxy_expansion < 320) galaxy_expansion += 24;
         _15(!galaxy_open AND galaxy_expansion > 0) galaxy_expansion -= 30;
         DrawDenseGalaxy(v_cx, v_cy, galaxy_expansion);
-        DrawGoldenSun(v_cx, v_cy, 50);
+        //DrawActiveSun(v_cx, v_cy, 50);
+        DrawActiveSun(400, 300, 80); // (X, Y, Radius)
         /// ==========================================
         /// LIVE RTC (DATUM UND UHRZEIT) IN DER SONNE
         /// ==========================================
@@ -2317,16 +2541,29 @@ extern "C" void main(BootInfo* sys_info) {
                                     dir[i].type = 1; dir[i].file_size = 5120; dir[i].start_lba = 10000;
                                     _39(int n=0; n<11; n++) { dir[i].filename[n] = 0; cfs_files[i].name[n] = 0; }
                                     str_cpy(dir[i].filename, "APP.BIN"); 
-									str_cpy(cfs_files[i].name, "APP.BIN");
-									
-									// BARE METAL FIX: UI-Puffer aktualisieren, sonst lädt OPEN den falschen Sektor!
-									cfs_files[i].start_lba = 10000;
-									cfs_files[i].size = 5120;
-									cfs_files[i].is_folder = _86;
-									
-									ahci_write_sectors(1002, (uint64_t)buf_dir);
+                                    str_cpy(cfs_files[i].name, "APP.BIN");
+                                    
+                                    cfs_files[i].start_lba = 10000;
+                                    cfs_files[i].size = 5120;
+                                    cfs_files[i].is_folder = _86;
+                                    
+                                    ahci_write_sectors(1002, (uint64_t)buf_dir);
                                     _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("pause");
-                                    cfs_files[i].exists = 1; cfs_files[i].size = 5120; cfs_files[i].start_lba = 10000;
+                                    
+                                    // ==========================================
+                                    // BARE METAL FIX: FLUMMI AUF DIE FESTPLATTE BRENNEN!
+                                    // ==========================================
+                                    uint8_t* app_ram = (uint8_t*)0x09000000;
+                                    for(int b=0; b<5120; b++) app_ram[b] = 0;
+                                    for(int b=0; b<sizeof(app_bin); b++) app_ram[b] = app_bin[b];
+                                    
+                                    // 10 Sektoren (5120 Bytes) auf Sektor 10000 schreiben
+                                    for(int s=0; s<10; s++) {
+                                        ahci_write_sectors(10000 + s, (uint64_t)(app_ram + (s * 512)));
+                                        _39(_192 _43 wait3 = 0; wait3 < 100000; wait3++) __asm__ _192("pause");
+                                    }
+                                    
+                                    cfs_files[i].exists = 1;
                                     _37;
                                 }
                             }
@@ -2978,46 +3215,6 @@ extern "C" void main(BootInfo* sys_info) {
                         }
                     }
                 }
-            }
-        }
-		/// ==========================================
-        /// BARE METAL FIX: ORACLE RENDERER (64-BIT HUD)
-        /// ==========================================
-        if (show_oracle) {
-            DrawRoundedRect(30, 30, 740, 540, 5, 0x111111);
-            DrawRoundedRect(30, 30, 740, 30, 5, 0x333333);
-            Text(200, 38, "64-BIT HARDWARE ORACLE (SAFE READ ONLY)", 0x00FF00, _128);
-            Text(50, 70, "B:D:F", 0xAAAAAA, _128);
-            Text(130, 70, "VENDOR DEVICE", 0xAAAAAA, _128);
-            Text(280, 70, "64-BIT BASE ADDR (BAR0)", 0xAAAAAA, _128);
-            Text(550, 70, "DEVICE CLASS", 0xAAAAAA, _128);
-            int ry = 95;
-            for(int i=0; i<mirror_count; i++) {
-                char sb[12], sv[12], sd[12];
-                int_to_str(mirror_list[i].bus, sb);
-                hex_to_str(mirror_list[i].vendor, sv);
-                hex_to_str(mirror_list[i].device, sd);
-                Text(50, ry, sb, 0x888888, _86);
-                Text(130, ry, sv, 0x00FF00, _86);
-                Text(190, ry, sd, 0x00FF00, _86);
-                /// Die 64-Bit Adresse sicher in zwei Strings teilen und zusammenbauen
-                char h1[15], h2[15];
-                hex_to_str((uint32_t)(mirror_list[i].bar0 >> 32), h1);
-                hex_to_str((uint32_t)(mirror_list[i].bar0 & 0xFFFFFFFF), h2);
-                char s_bar[35];
-                str_cpy(s_bar, h1);
-                str_cat(s_bar, " ");
-                str_cat(s_bar, h2);
-                uint32_t col = (mirror_list[i].bar0 == 0) ? 0xFF0000 : 0xFFFFFF;
-                Text(280, ry, s_bar, col, _86);
-                Text(550, ry, mirror_list[i].name, 0xCCCCCC, _86);
-                ry += 14;
-            }
-			
-            /// Mit ESC schließen (Scancode 1)
-            if (key_scancode == 0x01) {
-                show_oracle = false;
-                key_scancode = 0; /// Taste konsumieren
             }
         }
 		// =========================================================================

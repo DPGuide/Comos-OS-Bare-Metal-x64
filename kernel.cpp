@@ -599,12 +599,12 @@ struct multiboot_info {
     _89 fb_width, fb_height;
     _184 fb_bpp, fb_type;
 };
-/// 2. Globale Variablen (Die "Behälter" für deine Hardware-Daten)
-_89* fb        = 0;
-_89* bb        = (_89*)0x02000000; /// Backbuffer
-_89  screen_w  = 800;              /// Standard-Breite
-_89  screen_h  = 600;              /// Standard-Höhe
-_89  pitch     = 800 * 4;          /// Bytes pro Zeile
+/// 2. Globale Variablen (Die "Behälter" für OS1)
+_89* fb        = 0;                   /// Zeigt auf die echte Grafikkarte
+_89* bb        = (_89*)0x02000000;    /// Backbuffer für den OS1-Ladebildschirm
+_89  screen_w  = 800;                 /// Standard-Breite
+_89  screen_h  = 600;                 /// Standard-Höhe
+_89  pitch     = 800 * 4;             /// Bytes pro Zeile für OS1
 /// 3. Weitere Hardware-Infos
 _202 GraphicsCardInfo {
     _182 vendor_id;
@@ -4180,6 +4180,10 @@ _50 execute_kernel() {
     info.framebuffer_addr = (_89)(uint64_t)fb;
     info.screen_width = screen_w;      
     info.screen_height = screen_h;
+    
+    // BARE METAL FIX: Wir packen den Pitch für OS2 in den Koffer!
+    info.framebuffer_pitch = pitch; 
+
     info.ahci_drive_count = drive_count;
     info.drives_list_ptr = (_89)(uint64_t)&drives[0];
     info.uhci_base_port = usb_io_base;

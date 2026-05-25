@@ -6,6 +6,8 @@ struct BootInfo {
     uint32_t screen_width;
     uint32_t screen_height;
     
+    uint32_t framebuffer_pitch; 
+    
     uint32_t ahci_drive_count;
     uint32_t drives_list_ptr;
 

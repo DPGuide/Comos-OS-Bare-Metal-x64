@@ -79,6 +79,32 @@ long_mode_start:
     movabsq $0x3000000, %rsp   
     mov %rbx, %rdi
     
+	# ==========================================
+    # BARE METAL FIX 1: FPU & SSE ENTSICHERN!
+    # Wir machen das in purem Assembler, bevor C++ überhaupt startet.
+    # ==========================================
+    clts
+    mov %cr0, %rax
+    and $0xFFFFFFFFFFFFFFFB, %rax
+    or $0x2, %rax
+    mov %rax, %cr0
+
+    mov %cr4, %rax
+    or $0x600, %rax
+    mov %rax, %cr4
+
+    fninit
+
+    # ==========================================
+    # BARE METAL FIX 2: DIE 16-BYTE ALIGNMENT FALLE
+    # Zwingt den Stack auf eine durch 16 teilbare Adresse.
+    # Das verhindert den tödlichen "movaps" SSE-Crash!
+    # ==========================================
+    and $-16, %rsp
+
+    # ---> HIER STEHT DEIN VORHANDENER AUFRUF <---
+    # call main
+	
     # Ab ins C++!
     movabsq $main, %rax
     call *%rax
