@@ -99,7 +99,7 @@ _44 uhci_execute_td(_89 pid, _43 dev_addr, _43 ep, void* buffer, _43 len, _89 to
     outw(usb_io_base, inw(usb_io_base) | 0x0001);
     _43 timeout = 1000000;
     _114((current_td->ctrl_status & (1 << 23)) AND timeout > 0) {
-        __asm__ _192("pause");
+        __asm__ _192("nop");
         timeout--;
     }
     outw(usb_io_base, inw(usb_io_base) & ~0x0001);
@@ -190,7 +190,7 @@ _44 uhci_execute_control(_43 dev_addr) {
     _39(_43 i=0; i<1024; i++) uhci_frame_list[i] = (_89)(uint64_t)current_td;
     outw(usb_io_base, inw(usb_io_base) | 0x0001); 
     _43 timeout = 1000000;
-    _114((current_td->ctrl_status & (1 << 23)) AND timeout > 0) { __asm__ _192("pause"); timeout--; }
+    _114((current_td->ctrl_status & (1 << 23)) AND timeout > 0) { __asm__ _192("nop"); timeout--; }
 	// DEBUG-INFO HINZUFÜGEN:
     _15(current_td->ctrl_status & 0x7E0000) {
         // Hier könntest du dir den Error-Code ausgeben lassen:
@@ -206,13 +206,13 @@ _44 uhci_execute_control(_43 dev_addr) {
     _39(_43 i=0; i<1024; i++) uhci_frame_list[i] = (_89)(uint64_t)current_td;
     outw(usb_io_base, inw(usb_io_base) | 0x0001); 
     timeout = 1000000;
-    _114((current_td->ctrl_status & (1 << 23)) AND timeout > 0) { __asm__ _192("pause"); timeout--; }
+    _114((current_td->ctrl_status & (1 << 23)) AND timeout > 0) { __asm__ _192("nop"); timeout--; }
     outw(usb_io_base, inw(usb_io_base) & ~0x0001); 
     _15(timeout EQ 0 OR (current_td->ctrl_status & 0x7E0000)) _96 _86;
     _96 _128;
 }
 
-_50 uhci_safe_delay(_43 loops) { _39(volatile _43 i = 0; i < loops; i++) { __asm__ _192("pause"); } }
+_50 uhci_safe_delay(_43 loops) { _39(volatile _43 i = 0; i < loops; i++) { __asm__ _192("nop"); } }
 
 _44 usb_enumerate_device(_43 port_idx, _43 new_address) {
     _182 port_reg = usb_io_base + 0x10 + (port_idx * 2);
@@ -407,11 +407,11 @@ extern "C" _50 usb_scan_and_mount() {
                 
                 /// --- PORT RESET ---
                 outw(port_reg, 0x0200);
-                _39(_43 wait=0; wait<1000000; wait++) __asm__ ("pause"); 
+                _39(_43 wait=0; wait<1000000; wait++) __asm__ ("nop"); 
                 outw(port_reg, 0x0000);
-                _39(_43 wait=0; wait<1000000; wait++) __asm__ ("pause"); 
+                _39(_43 wait=0; wait<1000000; wait++) __asm__ ("nop"); 
                 outw(port_reg, 0x0004 | 0x0002);
-                _39(_43 wait=0; wait<1000000; wait++) __asm__ ("pause"); 
+                _39(_43 wait=0; wait<1000000; wait++) __asm__ ("nop"); 
 
                 /// Port enabled?
                 _15(inw(port_reg) & 0x0004) {

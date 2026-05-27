@@ -185,7 +185,7 @@ _50 run_cosmos_script(char* file_buffer, int file_size) {
                 sys_print("SPINNING UP SATA DRIVE...");
                 uint32_t buf_dir = 0x00901000; 
                 ahci_read_sectors(0, 1002, 1, buf_dir);
-                for(volatile int w=0; w<1500000; w++) __asm__ volatile("pause");
+                for(volatile int w=0; w<1500000; w++) __asm__ volatile("nop");
                 
                 CFS_DIR_ENTRY* dir = (CFS_DIR_ENTRY*)(unsigned long long)buf_dir;
                 bool found = false;
@@ -199,7 +199,7 @@ _50 run_cosmos_script(char* file_buffer, int file_size) {
                             dir[i].filename[n] = new_name[n];
                         }
                         ahci_write_sectors(0, 1002, 1, buf_dir);
-                        for(volatile int w=0; w<1500000; w++) __asm__ volatile("pause");
+                        for(volatile int w=0; w<1500000; w++) __asm__ volatile("nop");
                         
                         char msg[64]; str_cpy(msg, "HDD WRITE OK: "); str_cat(msg, dir[i].filename);
                         sys_print(msg);
@@ -213,7 +213,7 @@ _50 run_cosmos_script(char* file_buffer, int file_size) {
                 sys_print("READING PHYSICAL SATA DRIVE...");
                 uint32_t buf_dir = 0x00901000;
                 ahci_read_sectors(0, 1002, 1, buf_dir);
-                for(volatile int w=0; w<1500000; w++) __asm__ volatile("pause");
+                for(volatile int w=0; w<1500000; w++) __asm__ volatile("nop");
                 
                 sys_print("VOLUME: HARD DISK 0 (CFS V2)");
                 sys_print("-------------------------");

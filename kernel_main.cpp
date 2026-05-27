@@ -98,7 +98,7 @@ void internal_test_task() {
         vga[1] = 0x0A; // Hellgrün
         
         // Pause, um die CPU nicht zu grillen
-        for(volatile int i = 0; i < 5000000; i++) {}
+        for(volatile int i = 0; i < 1000000; i++) {}
         
         // Abgeben
         __asm__ volatile("int $0x80" : : "a"(0LL)); 
@@ -783,8 +783,8 @@ int ahci_rw(uint32_t lba, uint64_t buffer_addr, int is_write) {
     
     /// Timeout für 64-Bit CPU Geschwindigkeiten
     uint32_t spin = 0; 
-    while((port->tfd & (0x80 | 0x08)) && spin++ < 50000000);
-    if(spin >= 50000000) return 0;
+    while((port->tfd & (0x80 | 0x08)) && spin++ < 1000000);
+    if(spin >= 1000000) return 0;
     
     port->ci = 1; 
     
@@ -792,7 +792,7 @@ int ahci_rw(uint32_t lba, uint64_t buffer_addr, int is_write) {
     while(1) { 
         if((port->ci & 1) == 0) break; 
         if(port->is & (1 << 30)) return 0; 
-        if(spin++ > 100000000) return 0; 
+        if(spin++ > 1000000) return 0; 
     }
     if(port->tfd & 0x01) return 0;
     return 1;
@@ -833,6 +833,7 @@ uint8_t sys_lang = 0;
 uint8_t sys_theme = 0;
 /// BARE METAL FIX: Der globale Status-String ist zurück!
 char cmd_status[256] = "SYSTEM READY";
+uint32_t hda_debug_c0_resp = 0;
 /// NEU: Textspeicher für die klickbare Hardware-Liste
 char hw_storage[256] = "PRESS TO SCAN";
 char hw_net[256]     = "PRESS TO SCAN";
@@ -1703,30 +1704,72 @@ __attribute__((naked)) void syscall_isr() {
 /// ==========================================
 uint32_t e1000_mmio_base = 0; 
 
+extern "C" void hda_init_controller(uint32_t hda_base);
+
+uint32_t pci_dev_count = 0;
 void pci_scan_all() {
-    /// Wir nutzen jetzt überall uint32_t, damit der Compiler deine Original-Funktion nimmt!
+    pci_dev_count = 0;
     for (uint32_t bus = 0; bus < 256; bus++) {
         for (uint32_t slot = 0; slot < 32; slot++) {
-            
-            /// Explizite (uint32_t) Casts für die Nullen
-            uint32_t vendor_device = pci_read(bus, slot, (uint32_t)0, (uint32_t)0);
-            
-            if (vendor_device != 0xFFFFFFFF) {
+            /// Multi-Function Device: Alle 8 Funktionen durchsuchen!
+            for (uint32_t func = 0; func < 8; func++) {
+                
+                uint32_t vendor_device = pci_read(bus, slot, func, (uint32_t)0);
+                if (vendor_device == 0xFFFFFFFF) {
+                    /// func=0 nicht da = kein Multi-Function Device, rest überspringen
+                    if (func == 0) break;
+                    continue;
+                }
+                pci_dev_count++;
+                
                 uint32_t vendor = vendor_device & 0xFFFF;
                 uint32_t device = vendor_device >> 16;
                 
-                /// 8086 = Intel, 100E = E1000
+                /// Intel E1000 Netzwerkkarte
                 if (vendor == 0x8086 && device == 0x100E) {
-                    
-                    /// Hier auch nochmal explizit (uint32_t) angeben
-                    uint32_t bar0 = pci_read(bus, slot, (uint32_t)0, (uint32_t)0x10);
+                    uint32_t bar0 = pci_read(bus, slot, func, (uint32_t)0x10);
                     e1000_mmio_base = bar0 & 0xFFFFFFF0; 
-                    
                     if (e1000_mmio_base != 0) {
                         map_mmio_64(e1000_mmio_base);
                         intel_e1000_init(e1000_mmio_base);
                     }
-                    return; 
+                }
+                
+                /// Intel HD Audio - via Class/Subclass 
+                /// WICHTIG: Erlaube Subclass <= 3, da manche Intel Chips als 0x01 (Multimedia Audio) gemeldet werden!
+                uint32_t cls = pci_read(bus, slot, func, 0x08);
+                uint8_t base_class = (cls >> 24) & 0xFF;
+                uint8_t sub_class  = (cls >> 16) & 0xFF;
+                
+                if (base_class == 0x04 && sub_class <= 0x03) {
+                    extern uint32_t hda_base_addr;
+                    if (hda_base_addr != 0) continue; /// Schon gefunden!
+                    
+                    uint32_t bar0 = pci_read(bus, slot, func, 0x10);
+                    uint32_t bar_type = bar0 & 0x06; // Bits 1-2: 00=32bit, 10=64bit
+                    uint32_t mmio = bar0 & 0xFFFFFFF0;
+                    
+                    /// Bei 64-bit BAR: obere 32 Bit lesen
+                    if (bar_type == 0x04) {
+                        uint32_t bar1 = pci_read(bus, slot, func, 0x14);
+                        /// Wenn obere 32 Bit != 0, wir können das nicht mappen (>4GB)
+                        /// Aber auf normalen Rechnern ist es immer < 4GB
+                        if (bar1 != 0) continue; /// Zu hoch!
+                    }
+                    
+                    hda_base_addr = mmio;
+                    
+                    /// Bus Master + Memory Space aktivieren
+                    uint32_t cmd = pci_read(bus, slot, func, 0x04);
+                    pci_write(bus, slot, func, 0x04, cmd | 0x06);
+                    
+                    if (hda_base_addr != 0) {
+                        /// HDA MMIO-Region mappen (z.B. 0xFE890000)
+                        map_mmio_64(hda_base_addr);
+                        /// Auch die HDA RAM-Puffer (CORB/RIRB bei 34 MB) mappen
+                        map_mmio_64(0x02200000);
+                        hda_init_controller(hda_base_addr);
+                    }
                 }
             }
         }
@@ -2049,9 +2092,9 @@ void bare_metal_port_init(int port_no) {
     
     // ANTI-FREEZE: Notausgang nach 1.000.000 Zyklen!
     int timeout = 1000000;
-    while ((port_regs[6] & (1 << 14)) && timeout--) { __asm__ volatile("pause"); }
+    while ((port_regs[6] & (1 << 14)) && timeout--) { __asm__ volatile("nop"); }
     timeout = 1000000;
-    while ((port_regs[6] & (1 << 15)) && timeout--) { __asm__ volatile("pause"); }
+    while ((port_regs[6] & (1 << 15)) && timeout--) { __asm__ volatile("nop"); }
 
     str_cpy(cmd_status, "PORT REBASE (64-BIT RAM)!");
 
@@ -2086,7 +2129,7 @@ void bare_metal_port_init(int port_no) {
     
     // 6. Motor wieder an (Mit Anti-Freeze!)
     timeout = 1000000;
-    while (((port_regs[8] & 0x88) != 0) && timeout--) { __asm__ volatile("pause"); }
+    while (((port_regs[8] & 0x88) != 0) && timeout--) { __asm__ volatile("nop"); }
     
     port_regs[6] |= 0x00000010; 
     port_regs[6] |= 0x00000001; 
@@ -2094,6 +2137,10 @@ void bare_metal_port_init(int port_no) {
 
 /// 6. DER HAUPT-EINSTIEG 
 /// ==========================================
+extern bool sound_muted;
+extern _50 play_sound(_89 n_freq, _43 duration);
+extern _50 play_freq(_89 f);
+
 extern "C" void main(BootInfo* boot_info) {
     
     // Ab hier ist float erlaubt!
@@ -2791,7 +2838,7 @@ extern "C" void main(BootInfo* boot_info) {
                 DrawRoundedRect(knob_x - 5, slider_y - 2, 10, 12, 4, 0xFFFFFF);
                 
                 // Label & Wert-Anzeige
-                Text(wx + 180, slider_y - 2, "SENS:", 0xAAAAAA, _128);
+                Text(wx + 180, slider_y - 2, "MOUSE SENSITIVITY:", 0xAAAAAA, _128);
                 // Hier müsstest du ggf. noch einen Int-to-String Konverter nutzen, 
                 // falls du die Zahl anzeigen willst.
 
@@ -2924,12 +2971,62 @@ extern "C" void main(BootInfo* boot_info) {
                     input_cooldown = 25;
                 }
                 Text(wx+30, wy+350, l_usb, c_us_lbl, _128); Text(wx+130, wy+350, hw_usb, c_us_val, _128);
+                
+                /// KLICKBAR: SOUND MUTE & TEST
+                
+                /// Mute Button
+                _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+30, wy+370, 100, 20)) {
+                    sound_muted = !sound_muted;
+                    _15(sound_muted) play_freq(0); /// Sofort stumm!
+                    input_cooldown = 25;
+                }
+                Text(wx+30, wy+375, sound_muted ? "SOUND: MUTED" : "SOUND: ON", sound_muted ? 0xFF0000 : 0x00FF00, _128);
+                
+                /// Test Button
+                _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+150, wy+370, 100, 20)) {
+                    play_sound(1200, 10);
+                    input_cooldown = 25;
+                }
+                DrawRoundedRect(wx+145, wy+370, 90, 18, 3, 0x555555);
+                Text(wx+150, wy+375, "TEST BEEP", 0xFFFFFF, _128);
+                
+                /// HDA DEBUG INFO (zeigt was der Treiber wirklich findet)
+                extern uint32_t hda_base_addr;
+                extern uint32_t hda_dac_nid;
+                extern uint32_t hda_pin_nid;
+                extern uint32_t hda_output_stream_offset;
+                extern uint32_t hda_codec_id;
+                extern uint32_t pci_dev_count;
+                
+                char hda_dbg[64];
+                _15(hda_base_addr == 0) {
+                    str_cpy(hda_dbg, "HDA: NOT FOUND (SCANNED: ");
+                    char tmp[8]; int_to_str(pci_dev_count, tmp);
+                    str_cat(hda_dbg, tmp);
+                    str_cat(hda_dbg, " DEV)");
+                } _41 _15(hda_dac_nid == 0) {
+                    str_cpy(hda_dbg, "HDA: NO CODEC! C0=");
+                    char tmp[12]; hex_to_str(hda_debug_c0_resp, tmp);
+                    str_cat(hda_dbg, tmp);
+                } _41 {
+                    /// Zeige: BASE | CODEC | DAC | PIN
+                    str_cpy(hda_dbg, "HDA:OK C=");
+                    char tmp[8]; int_to_str(hda_codec_id, tmp);
+                    str_cat(hda_dbg, tmp);
+                    str_cat(hda_dbg, " D=");
+                    int_to_str(hda_dac_nid, tmp);
+                    str_cat(hda_dbg, tmp);
+                    str_cat(hda_dbg, " P=");
+                    int_to_str(hda_pin_nid, tmp);
+                    str_cat(hda_dbg, tmp);
+                }
+                Text(wx+30, wy+395, hda_dbg, hda_dac_nid ? 0x00FF00 : 0xFF4400, _86);
 				/// ==========================================
                 /// 5. BARE METAL TASK MANAGER (LIVE-ANZEIGE)
                 /// ==========================================
-                TextC(mid, wy+380, "LIVE TASK SCHEDULER", 0x000000, _128);
+                TextC(mid, wy+405, "LIVE TASK SCHEDULER", 0x000000, _128);
                 
-                _43 task_y = wy + 400;
+                _43 task_y = wy + 425;
                 _39(_43 t = 0; t < 4; t++) {
                     _15(tasks[t].active) {
                         char s_id[5]; int_to_str(t, s_id);
@@ -3010,6 +3107,14 @@ extern "C" void main(BootInfo* boot_info) {
                     /// 2. USB drives
                     find_and_init_usb();
                     usb_scan_and_mount();
+                    /// FIX: USB Laufwerke zur drives[] Liste hinzufügen!
+                    _15(usb_io_base != 0 AND drive_count < 8) {
+                        drives[drive_count].type = 3; /// Type 3 = USB
+                        drives[drive_count].base_port = (uint32_t)usb_io_base;
+                        drives[drive_count].size_mb = 0;
+                        str_cpy(drives[drive_count].model, "USB STICK");
+                        drive_count++;
+                    }
                 }
 
                 _44 is_active = (win_z[12] EQ win->id);
@@ -3048,7 +3153,7 @@ extern "C" void main(BootInfo* boot_info) {
                         _15(selected_drive_idx != 99) {
                             active_sata_port = detected_ports[selected_drive_idx];
                             ahci_read_sectors(1002, (uint32_t)buf_dir);
-                            _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("pause");
+                            _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                             CFS_DIR_ENTRY* dir = (CFS_DIR_ENTRY*)buf_dir;
                             _39(int i=0; i<28; i++) {
                                 _15(dir[i].type == 0) {
@@ -3062,7 +3167,7 @@ extern "C" void main(BootInfo* boot_info) {
                                     cfs_files[i].is_folder = _86;
                                     
                                     ahci_write_sectors(1002, (uint64_t)buf_dir);
-                                    _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("pause");
+                                    _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("nop");
                                     
                                     // ==========================================
                                     // BARE METAL FIX: FLUMMI AUF DIE FESTPLATTE BRENNEN!
@@ -3074,7 +3179,7 @@ extern "C" void main(BootInfo* boot_info) {
                                     // 10 Sektoren (5120 Bytes) auf Sektor 10000 schreiben
                                     for(int s=0; s<10; s++) {
                                         ahci_write_sectors(10000 + s, (uint64_t)(app_ram + (s * 512)));
-                                        _39(_192 _43 wait3 = 0; wait3 < 100000; wait3++) __asm__ _192("pause");
+                                        _39(_192 _43 wait3 = 0; wait3 < 100000; wait3++) __asm__ _192("nop");
                                     }
                                     
                                     cfs_files[i].exists = 1;
@@ -3098,7 +3203,7 @@ extern "C" void main(BootInfo* boot_info) {
                                 _39(int k = 0; k < 512; k++) ((char*)tmp_dir)[k] = 0;
                                 
                                 disk_read_auto(1002, tmp_dir);
-                                _39(_192 _43 wait = 0; wait < 100000; wait++) __asm__ _192("pause");
+                                _39(_192 _43 wait = 0; wait < 100000; wait++) __asm__ _192("nop");
                                 
                                 CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)tmp_dir;
                                 int free_slot = -1;
@@ -3111,7 +3216,7 @@ extern "C" void main(BootInfo* boot_info) {
                                         /// DATEI: Daten aus dem RAM auf die Festplatte brennen!
                                         _39(int s=0; s<10; s++) {
                                             disk_write_auto(target_lba + s, 0x09000000 + (s * 512));
-                                            _39(_192 _43 wait = 0; wait < 50000; wait++) __asm__ _192("pause");
+                                            _39(_192 _43 wait = 0; wait < 50000; wait++) __asm__ _192("nop");
                                         }
                                         entries[free_slot].type = 1; 
                                         entries[free_slot].file_size = 5120; 
@@ -3129,7 +3234,7 @@ extern "C" void main(BootInfo* boot_info) {
                                     str_cpy(entries[free_slot].filename, clipboard_name);
                                     
                                     disk_write_auto(1002, tmp_dir);
-                                    _39(_192 _43 wait = 0; wait < 200000; wait++) __asm__ _192("pause");
+                                    _39(_192 _43 wait = 0; wait < 200000; wait++) __asm__ _192("nop");
                                     
                                     print_win(win, "\n[OK] PASTED FROM CLIPBOARD.\n");
                                     need_ui_refresh = _128;
@@ -3275,7 +3380,7 @@ extern "C" void main(BootInfo* boot_info) {
                                     _15(selected_drive_idx != 99) {
 										active_sata_port = detected_ports[selected_drive_idx];
 										ahci_read_sectors(1002, (uint32_t)buf_dir);
-										_39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("pause");
+										_39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
 									}
                                     _15(is_bin) {
                                         print_win(win, "\n[SYS] LOADING BINARY APP...\n");
@@ -3298,7 +3403,7 @@ extern "C" void main(BootInfo* boot_info) {
                                         _39(int j=0; j<2000; j++) text_buffer[j] = 0;
                                         
                                         disk_read_auto(active_file_lba, text_ram_addr);
-                                        _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("pause");
+                                        _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                                         
                                         int limit = cfs_files[i].size;
                                         if(limit > 2000) limit = 2000; if(limit == 0) limit = 512;
@@ -3330,7 +3435,7 @@ extern "C" void main(BootInfo* boot_info) {
                                     /// 10 Sektoren von der HDD in den RAM lesen (nur wenn es eine Datei ist)
                                     _39(int s=0; s<10; s++) {
                                         disk_read_auto(cfs_files[i].start_lba + s, copy_ram_buffer + (s * 512));
-                                        _39(_192 _43 wait = 0; wait < 50000; wait++) __asm__ _192("pause");
+                                        _39(_192 _43 wait = 0; wait < 50000; wait++) __asm__ _192("nop");
                                     }
                                 }
                                 
@@ -3390,11 +3495,11 @@ extern "C" void main(BootInfo* boot_info) {
                         char* mbr = (char*)buf_mbr; _39(int i=0; i<512; i++) mbr[i] = 0;
                         mbr[3] = 'C'; mbr[4] = 'F'; mbr[5] = 'S'; mbr[510] = 0x55; mbr[511] = 0xAA;         
                         disk_write_auto(0, (uint32_t)buf_mbr); 
-                        _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("pause");
+                        _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                         
                         char* dir = (char*)buf_dir; _39(int i=0; i<512; i++) dir[i] = 0;
                         disk_write_auto(1002, (uint32_t)buf_dir);
-                        _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("pause");
+                        _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("nop");
                         
                         _39(int i=0; i<28; i++) { cfs_files[i].exists = 0; cfs_files[i].is_folder = 0; cfs_files[i].parent_idx = 255; }
                         is_mounted = false; current_folder_id = 255; 
@@ -3425,7 +3530,7 @@ extern "C" void main(BootInfo* boot_info) {
                         
                         /// UNIVERSAL READ!
                         disk_read_auto(0, (uint64_t)buf_mbr);
-                        _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("pause");
+                        _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                         
                         uint8_t* boot = (uint8_t*)buf_mbr;
                         _39(int i=0; i<28; i++) { cfs_files[i].exists = 0; cfs_files[i].parent_idx = 255; cfs_files[i].is_folder = 0; }
@@ -3437,7 +3542,7 @@ extern "C" void main(BootInfo* boot_info) {
                             _39(int i=0; i<512; i++) ((char*)buf_dir)[i] = 0;
                             
                             disk_read_auto(1002, (uint64_t)buf_dir); /// UNIVERSAL READ!
-                            _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("pause");
+                            _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("nop");
                             
                             CFS_DIR_ENTRY* dir = (CFS_DIR_ENTRY*)buf_dir;
                             _39(int i=0; i<28; i++) {
@@ -3452,6 +3557,7 @@ extern "C" void main(BootInfo* boot_info) {
                                     drive_used_kb += dir[i].file_size; 
                                 }
                             }
+                            need_ui_refresh = _128; /// FIX: CFS Dateien im Explorer anzeigen!
                             print_win(win, "\n[OK] OS2 CFS V2 MOUNTED.\n");
                         } 
                         /// FALL 2: EASTER EGG
@@ -3469,16 +3575,16 @@ extern "C" void main(BootInfo* boot_info) {
                                 _15(part_type == 0xEE) {
                                     print_win(win, "\n[OK] GPT DRIVE DETECTED.\n");
                                     disk_read_auto(1, (uint64_t)buf_dir); /// UNIVERSAL READ!
-                                    _39(_192 _43 w = 0; w < 500000; w++) __asm__ _192("pause"); 
+                                    _39(_192 _43 w = 0; w < 500000; w++) __asm__ _192("nop"); 
                                     uint64_t table_lba = *(uint64_t*)(buf_dir + 72);
                                     
                                     disk_read_auto(table_lba, (uint64_t)buf_dir); /// UNIVERSAL READ!
-                                    _39(_192 _43 w2 = 0; w2 < 500000; w2++) __asm__ _192("pause"); 
+                                    _39(_192 _43 w2 = 0; w2 < 500000; w2++) __asm__ _192("nop"); 
                                     _39(int p=0; p<4; p++) {
                                         uint64_t slba = *(uint64_t*)(buf_dir + (p * 128) + 32);
                                         _15(slba > 0) {
                                             disk_read_auto(slba, (uint64_t)buf_mbr); /// UNIVERSAL READ!
-                                            _39(_192 _43 w3 = 0; w3 < 200000; w3++) __asm__ _192("pause"); 
+                                            _39(_192 _43 w3 = 0; w3 < 200000; w3++) __asm__ _192("nop"); 
                                             if (((uint8_t*)buf_mbr)[3]=='N' && ((uint8_t*)buf_mbr)[4]=='T') { target_ntfs_lba = slba; _37; }
                                         }
                                     }
@@ -3492,7 +3598,7 @@ extern "C" void main(BootInfo* boot_info) {
                                 is_ntfs_drive = _128;
                                 
                                 disk_read_auto(target_ntfs_lba, (uint64_t)buf_dir); /// UNIVERSAL READ!
-                                _39(_192 _43 w = 0; w < 500000; w++) __asm__ _192("pause"); 
+                                _39(_192 _43 w = 0; w < 500000; w++) __asm__ _192("nop"); 
                                 uint8_t* vbr = (uint8_t*)buf_dir;
                                 _43 sec_per_cluster = vbr[13];
                                 uint64_t mft_cluster = *(uint64_t*)&vbr[48];
@@ -3506,10 +3612,10 @@ extern "C" void main(BootInfo* boot_info) {
                                     uint64_t ram_target = (uint64_t)(mft_cache + (rec * 1024));
                                     
                                     disk_read_auto(record_lba, ram_target); /// UNIVERSAL READ!
-                                    _39(_192 _43 w1 = 0; w1 < 2000; w1++) __asm__ _192("pause");
+                                    _39(_192 _43 w1 = 0; w1 < 2000; w1++) __asm__ _192("nop");
                                     
                                     disk_read_auto(record_lba + 1, ram_target + 512); /// UNIVERSAL READ!
-                                    _39(_192 _43 w2 = 0; w2 < 2000; w2++) __asm__ _192("pause");
+                                    _39(_192 _43 w2 = 0; w2 < 2000; w2++) __asm__ _192("nop");
                                 }
                                 print_win(win, "[OK] CACHE READY! RAM SPEED UNLOCKED.\n");
                                 need_ui_refresh = _128; 
@@ -3616,7 +3722,7 @@ extern "C" void main(BootInfo* boot_info) {
                         _39(int i=0; i < windows[0].cursor_pos; i++) file_data[i] = windows[0].content[i];
                         /// 2. INHALTSVERZEICHNIS LADEN (Nutzt deinen Universal-Adapter!)
                         disk_read_auto(1002, buf_dir);
-                        _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("pause");
+                        _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                         /// 3. FREIEN SLOT SUCHEN
                         CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)buf_dir;
                         int slot = -1;
@@ -3625,7 +3731,7 @@ extern "C" void main(BootInfo* boot_info) {
                             /// 4. TEXT AUF FESTPLATTE ODER USB BRENNEN
                             uint32_t target_sec = 4000 + slot;
                             disk_write_auto(target_sec, text_ram_addr);
-                            _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("pause");
+                            _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                             
                             /// 5. INHALTSVERZEICHNIS AKTUALISIEREN (V2!)
                             entries[slot].type = 1;
@@ -3638,7 +3744,7 @@ extern "C" void main(BootInfo* boot_info) {
                             entries[slot].parent_idx = current_folder_id; 
                             
                             disk_write_auto(1002, buf_dir);
-                            _39(_192 _43 wait2=0; wait2<500000; wait2++) __asm__ _192("pause");
+                            _39(_192 _43 wait2=0; wait2<500000; wait2++) __asm__ _192("nop");
                             
                             /// 6. LIVE UI UPDATE
                             cfs_files[slot].exists = 1;
@@ -3668,7 +3774,7 @@ extern "C" void main(BootInfo* boot_info) {
                     _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+ww-100, wy+wh-40, 80, 25)) { 
                         /// 1. INHALTSVERZEICHNIS LADEN
                         disk_read_auto(1002, buf_dir);
-                        _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("pause");
+                        _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                         CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)buf_dir;
                         int slot = -1;
                         _39(int i=0; i<28; i++) { _15(entries[i].type EQ 0) { slot = i; _37; } }
@@ -3684,7 +3790,7 @@ extern "C" void main(BootInfo* boot_info) {
                             entries[slot].parent_idx = current_folder_id; 
                             
                             disk_write_auto(1002, buf_dir);
-                            _39(_192 _43 wait2=0; wait2<500000; wait2++) __asm__ _192("pause");
+                            _39(_192 _43 wait2=0; wait2<500000; wait2++) __asm__ _192("nop");
                             
                             /// 3. UI UPDATE
                             cfs_files[slot].exists = 1;

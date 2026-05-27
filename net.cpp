@@ -93,7 +93,7 @@ _50 e1000_base_reset() {
     ///mmio_write32(intel_mem_base + 0x0000, ctrl | 0x04000000);
     /// 3. Pause (Hardware bootet neu)
     _39(_89 wait = 0; wait < 10000000; wait++) { 
-        __asm__ _192("pause"); 
+        __asm__ _192("nop"); 
     }
     /// 4. Interrupts NOCHMAL aus
     mmio_write32(intel_mem_base + 0x00D8, 0xFFFFFFFF);
@@ -179,7 +179,7 @@ _50 net_raw(_50* d, _89 l) {
                 tx_done = _128; 
                 _96; 
             }
-            __asm__ _192("pause" ::: "memory");
+            __asm__ _192("nop" ::: "memory");
         }
 
         _15(tx_done) {
@@ -484,7 +484,7 @@ _50 e1000_enable_tx() {
     mmio_write32(intel_mem_base + 0x3828, 0x02010000);
     _39(_89 wait=0; wait<1000000; wait++) {
         _15((mmio_read32(intel_mem_base + 0x3828) & 0x02000000) NEQ 0) break;
-        __asm__ _192("pause");
+        __asm__ _192("nop");
     }
 }
 
@@ -546,7 +546,7 @@ _50 intel_e1000_init(_89 mmio_addr) {
     ///mmio_write32(intel_mem_base + 0x0000, ctrl_rst | 0x04000000);
     
     /// Warten, bis der Chip neu gebootet ist
-    _39(_192 _89 delay = 0; delay < 1000000; delay++) { __asm__ _192("pause"); }
+    _39(_192 _89 delay = 0; delay < 1000000; delay++) { __asm__ _192("nop"); }
     
     /// Alte Interrupts löschen
     mmio_write32(intel_mem_base + 0x00D8, 0xFFFFFFFF);
@@ -569,7 +569,7 @@ _50 intel_e1000_init(_89 mmio_addr) {
     /// --- SANFTER STOPP UND LINK UP ---
     mmio_write32(intel_mem_base + 0x0100, 0); 
     mmio_write32(intel_mem_base + 0x0400, 0); 
-    _39(_192 _89 delay = 0; delay < 1000000; delay++) { __asm__ _192("pause"); }
+    _39(_192 _89 delay = 0; delay < 1000000; delay++) { __asm__ _192("nop"); }
     
     /// Link Up (SLU) und Auto-Speed (ASDE) erzwingen
     _89 ctrl = mmio_read32(intel_mem_base + 0x0000);

@@ -264,7 +264,7 @@ _50 fs_read_sectors(_43 drive_idx, _89 lba, _184* buf, _43 count) {
         /// EP_IN  = 129 (Stick zum Host, 0x81)
         usb_bot_read_sectors(d_port, 2, 129, lba, count, buf);
         /// USB braucht genauso wie AHCI eine winzige Atempause für den DMA-Transfer
-        _39(_192 _43 wait = 0; wait < 1000000; wait++) { __asm__ _192("pause"); }
+        _39(_192 _43 wait = 0; wait < 1000000; wait++) { __asm__ _192("nop"); }
     }
 }
 _43 ata_wait_busy(_182 base) { _43 t=100000; _114(t--) { _15(!(inb(base+7)&0x80)) _96 0; } _96 1; }
@@ -438,7 +438,7 @@ _50 fs_create_folder(_71 _30* foldername) {
     str_cpy(file_table[free_slot].name, (_30*)foldername);
     str_cpy(file_table[free_slot].date, "16.04.2026");
     ahci_write_sectors(drives[active_drive_idx].base_port, 1002, 1, (_89)(uint64_t)file_table);
-    _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("pause");
+    _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
 }
 _50 fs_save_file(_71 _30* filename, _89 size) {
     /// 1. Freien Platz in der Tabelle suchen
@@ -468,10 +468,10 @@ _50 fs_save_file(_71 _30* filename, _89 size) {
         text_buffer[idx++] = '\n'; 
     }
     ahci_write_sectors(drives[active_drive_idx].base_port, file_table[free_slot].sector_offset, 1, text_ram_addr);
-    _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("pause");
+    _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
     /// 4. Das Inhaltsverzeichnis (Sektor 1002) auf der Festplatte aktualisieren
     ahci_write_sectors(drives[active_drive_idx].base_port, 1002, 1, (_89)(uint64_t)file_table);
-    _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("pause");
+    _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("nop");
     current_open_file = free_slot; 
 }
 _50 fs_save() { fs_save_file("QUICK.TXT", 512); } 
@@ -583,7 +583,7 @@ _50 fs_format_drive() {
        _30* p = msg; _43 idx = 0; _114(*p) safe_buf[idx++] = *p++;
         /// Unsere kugelsichere Schreib-Funktion nutzen
         ahci_write_sectors(drives[active_drive_idx].base_port, 2000, 1, text_ram_addr);
-        _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("pause");
+        _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
     } _41 {
         /// Legacy ATA Fallback
         _39(_43 i = 0; i < 512; i++) hdd_buf[i] = 0;

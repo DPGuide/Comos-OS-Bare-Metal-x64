@@ -1106,7 +1106,7 @@ _44 ahci_read_multi(HBA_PORT *port, _89 startlba, _43 count, _50 *target_ram_add
     // (10 Millionen -> 1 Milliarde)
     // ==========================================
     _114 ((port->tfd & (0x80 | 0x08)) && spin < 1000000000) { 
-        __asm__ _192("pause"); 
+        __asm__ _192("nop"); 
         spin++; 
     }
     _15 (spin >= 1000000000) _96 0;
@@ -1120,7 +1120,7 @@ _44 ahci_read_multi(HBA_PORT *port, _89 startlba, _43 count, _50 *target_ram_add
     // BARE METAL FIX 4: LESE-TIMEOUT VERGRÖSSERN
     // ==========================================
     _114 (wait_spin < 1000000000) {
-        __asm__ _192("pause");
+        __asm__ _192("nop");
         _15 ((port->ci & (1 << slot)) == 0) _37;
         _15 (port->is & (1<<30)) _96 0;
         wait_spin++;

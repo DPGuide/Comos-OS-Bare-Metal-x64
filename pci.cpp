@@ -333,7 +333,7 @@ _50 xhci_bios_handoff(_89 cap_base) {
             /// 2. Kurz warten (Dein sicheres 1-Mio-Limit)
             _39(_43 wait = 0; wait < 1000000; wait++) {
                 _15((mmio_read32(ext_cap_ptr) & 0x00010000) EQ 0) _37;
-                asm volatile("pause");
+                asm volatile("nop");
             }
             
             /// ==========================================
@@ -637,7 +637,7 @@ _50 xhci_configure_endpoints(_184 slot_id, _89 speed) {
                     volatile uint32_t* db_array = (volatile uint32_t*)xhci_db_base;
                     db_array[slot_id] = 1; 
 
-                    _39(volatile _43 w = 0; w < 5000000; w++) { asm volatile("pause"); }
+                    _39(volatile _43 w = 0; w < 5000000; w++) { asm volatile("nop"); }
 
                     xhci_submit_mouse_read();
                 }
@@ -944,7 +944,7 @@ _50 pci_scan_all() {
                                     _15((cap_reg & 0xFF) EQ 0x01) { 
                                         _89 pmcsr = pci_read(bus, dev, func, cap_ptr + 4);
                                         pci_write(bus, dev, func, cap_ptr + 4, pmcsr & 0xFFFFFFFC);
-                                        _39(volatile _43 wait = 0; wait < 10000000; wait++) { asm volatile("pause"); }
+                                        _39(volatile _43 wait = 0; wait < 10000000; wait++) { asm volatile("nop"); }
                                         _37; 
                                     }
                                     cap_ptr = (cap_reg >> 8) & 0xFF;
