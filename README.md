@@ -1,4 +1,5 @@
-
+ ******
+***BARE METAL cosmOS x32 & x64***
 
 
  ******
