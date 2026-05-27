@@ -17,7 +17,7 @@ OS2 16 - 64 Bit Bare Metal
 
   ******
   ***update 27.05.2026***
-+ + more stable
++ + more stable / TASK SHEDULER
 + + *.bin to run 
   + 3D Grafic
   + Sound (older systems for now)
