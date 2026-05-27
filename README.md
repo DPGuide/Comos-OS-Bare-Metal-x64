@@ -1,6 +1,10 @@
 
 
-https://github.com/user-attachments/assets/48e6fa54-ce7e-4704-960c-55f482039838
+
+
+https://github.com/user-attachments/assets/875bba43-d745-42f8-8c85-3b098db35e8b
+
+
 
 16 OS1 16 Bit BareMEtal
 
@@ -25,3 +29,17 @@ OS2 16 - 64 Bit Bare Metal
  ******
   ***kernel.cpp is OS1 x32 - kernel_main.cpp is OS2 x64***
  ******
+
+
+https://github.com/user-attachments/assets/32d4c3c1-aebf-4bed-afc7-787363b6de73
+
+
+
+
+
+
+
+
+
+
+
