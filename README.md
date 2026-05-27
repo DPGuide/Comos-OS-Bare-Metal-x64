@@ -9,9 +9,6 @@ https://github.com/user-attachments/assets/875bba43-d745-42f8-8c85-3b098db35e8b
 <img width="497" height="721" alt="image" src="https://github.com/user-attachments/assets/c074f8c4-bd73-43d8-b329-534915a1e63e" />
 
   ******
-  
-  ******
-
   ******
   ***update 27.05.2026***
 + owen CFS Filesystem (working fine)
