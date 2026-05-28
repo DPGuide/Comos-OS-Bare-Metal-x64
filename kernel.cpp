@@ -1143,6 +1143,7 @@ _50 play_earthquake(_43 duration) {
         play_hda_freq(0);
     }
 }
+extern "C" void play_hda_wav(uint32_t pcm_addr, uint32_t size_bytes, uint16_t sample_rate, uint16_t channels, uint16_t bits);
 /// ==========================================
 /// BARE METAL: WAV FILE PLAYER (AC97 DMA)
 /// ==========================================
@@ -1160,7 +1161,7 @@ _50 play_wav_file(_43 file_idx) {
     _15(size_bytes EQ 0) _96;
     /// Aufrunden: Wie viele 512-Byte Sektoren müssen wir lesen?
     _43 sectors_to_read = (size_bytes / 512) + 1;
-    ahci_read_sectors(port, lba, sectors_to_read, file_load_addr);
+    fs_read_sectors(active_drive_idx, lba, (_184*)file_load_addr, sectors_to_read);
     /// Warten, bis die Festplatte fertig in den RAM kopiert hat
     _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
     /// 3. Den Header entschlüsseln!
@@ -1170,22 +1171,26 @@ _50 play_wav_file(_43 file_idx) {
         str_cpy(cmd_status, "ERROR: NOT A VALID WAV FILE!");
         _96; /// Abbruch, das ist keine Musik!
     }
-    /// 4. AC97 Playlist (BDL) für die Datei bauen
-    outb(ac97_bus_port + 0x1B, 0); /// DMA kurz stoppen
-    uint32_t* bdl = (uint32_t*)bdl_addr;
-    /// Wir geben der Soundkarte NICHT den Start der Datei, sondern überspringen 
-    /// die 44 Bytes des Headers! Sonst hört man den Header als lautes Knacken.
-    bdl[0] = file_load_addr + 44;
-    /// BARE METAL FALLE: Die AC97 Karte will die Länge nicht in Bytes, 
-    /// sondern in "Samples" (16-Bit Blöcken). Also halbieren wir die Dateigröße.
-    uint32_t total_samples = header->data_size / 2;
-    /// Länge übergeben und IOC (0x80000000) Autostopp-Flag setzen
-    bdl[1] = total_samples | 0x80000000;
-    /// 5. Feuer frei!
-    outl(ac97_bus_port + 0x10, bdl_addr);
-    outb(ac97_bus_port + 0x15, 0);       /// LVI zurücksetzen
-    outb(ac97_bus_port + 0x1B, 1);       /// PLAY STARTEN!
-    str_cpy(cmd_status, "PLAYING WAV FILE...");
+    /// 4. Hardware-Spezifisches Playback
+    extern uint32_t hda_base_addr;
+    _15(hda_base_addr != 0) {
+        /// HDA (Intel HD Audio) Player
+        play_hda_wav(file_load_addr + 44, header->data_size, header->sample_rate, header->num_channels, header->bits_per_sample);
+        str_cpy(cmd_status, "PLAYING WAV (HDA)...");
+    } _41 {
+        /// Legacy AC97 Player
+        outb(ac97_bus_port + 0x1B, 0); /// DMA kurz stoppen
+        uint32_t* bdl = (uint32_t*)bdl_addr;
+        bdl[0] = file_load_addr + 44;
+        
+        uint32_t total_samples = header->data_size / 2;
+        bdl[1] = total_samples | 0x80000000;
+        
+        outl(ac97_bus_port + 0x10, bdl_addr);
+        outb(ac97_bus_port + 0x15, 0);       /// LVI zurücksetzen
+        outb(ac97_bus_port + 0x1B, 1);       /// PLAY STARTEN!
+        str_cpy(cmd_status, "PLAYING WAV (AC97)...");
+    }
 }
 _182 current_volume = 0x0F0F; /// Start bei mittlerer Lautstärke
 _50 set_ac97_volume(_182 vol) {
@@ -1829,7 +1834,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
 		_15(active_mode EQ 0) { 
             _43 bf=++boot_frame; 
             _15(bf < 60) DrawGoldenSun(400, 300, bf * 3); 
-            _41 _15(bf < 100) { Clear(); boot_logo(); _15(bf EQ 70) play_earthquake(15); }
+            _41 _15(bf < 100) { Clear(); boot_logo(); }
             _41 active_mode = 1; 
         } _41 {
             _43 v_cx = 400; _43 v_cy = 300; 
@@ -2137,7 +2142,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                             } _41 _15(is_cfs) {
                                 /// BARE METAL FIX: CFS Dateinamen auslesen!
                                 _184 cfs_buf[512];
-                                ahci_read_sectors(drives[view_disk_idx].base_port, 1002, 1, (uint64_t)cfs_buf);
+                                ahci_read_sectors(drives[view_disk_idx].base_port, 1002, 4, (uint64_t)cfs_buf);
                                 _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                 CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)cfs_buf;
                                 _44 found = _86;
@@ -2349,11 +2354,11 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                     _15(input_cooldown EQ 0 AND mouse_just_pressed AND !blocked AND is_over_rect(mouse_x, mouse_y, wx+60, cy+30, 80, 20)) {
                         _43 port = drives[active_drive_idx].base_port;
                         _89 dir_ram_addr = 0x07000000;
-                        ahci_read_sectors(port, 1002, 1, dir_ram_addr);
+                        ahci_read_sectors(port, 1002, 4, dir_ram_addr);
                         _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                         CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_ram_addr;
                         str_cpy(entries[renaming_file_idx].filename, file_table[renaming_file_idx].name);
-                        ahci_write_sectors(port, 1002, 1, dir_ram_addr);
+                        ahci_write_sectors(port, 1002, 4, dir_ram_addr);
                         _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                         renaming_file_idx = 255;
                         input_cooldown = 15;
@@ -2526,7 +2531,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                             /// 1. Verzeichnis per DMA lesen
                             _43 port = drives[active_drive_idx].base_port;
                             _89 dir_ram_addr = 0x08000000; 
-                            ahci_read_sectors(port, 1002, 1, dir_ram_addr);
+                            ahci_read_sectors(port, 1002, 4, dir_ram_addr);
                             _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                             CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_ram_addr;
                             _43 y_off = wy + 100;
@@ -2543,7 +2548,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                     Text(hx+hw-85, y_off+5, "RECOVER", 0xFFFFFF, _86);
                                     _15(input_cooldown EQ 0 AND mouse_just_pressed AND !blocked AND is_over_rect(mouse_x, mouse_y, hx+hw-100, y_off+3, 70, 19)) {
                                         entries[i].type = (entries[i].start_lba > 0) ? 1 : 2; 
-                                        ahci_write_sectors(port, 1002, 1, dir_ram_addr);
+                                        ahci_write_sectors(port, 1002, 4, dir_ram_addr);
                                         _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                         input_cooldown = 20;
                                         click_consumed = _128;
@@ -2621,33 +2626,33 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                     _184* boot_sec = (_184*)0x04000000; 
                                     _39(_43 b=0; b<512; b++) boot_sec[b] = 0;
                                     /// Lese MBR (Sektor 0) - HIER IST DER FIX: (_89)
-                                    ahci_read_sectors(drives[active_drive_idx].base_port, 0, 1, (uint64_t)boot_sec);
+                                    fs_read_sectors(active_drive_idx, 0, (_184*)boot_sec, 1);
                                     _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                                     analyze_mbr(boot_sec);
                                     /// BARE METAL FIX: Wenn es eine GPT Platte ist, lesen wir den echten Header auf Sektor 1!
                                     _15(mbr_info_text[8] EQ 'G' AND mbr_info_text[9] EQ 'P' AND mbr_info_text[10] EQ 'T') {
                                         _39(_43 b=0; b<512; b++) boot_sec[b] = 0;
-                                        ahci_read_sectors(drives[active_drive_idx].base_port, 1, 1, (uint64_t)boot_sec);
+                                        fs_read_sectors(active_drive_idx, 1, (_184*)boot_sec, 1);
                                         _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                                         analyze_gpt(boot_sec);
                                         /// 2. Sektor 2 lesen (Die GPT Einträge!)
                                         _15(mbr_info_text[0] EQ 'G' AND mbr_info_text[1] EQ 'P' AND mbr_info_text[2] EQ 'T') {
                                             _39(_43 b=0; b<512; b++) boot_sec[b] = 0;
                                             gpt_partition_lba = 0;
-                                            ahci_read_sectors(drives[active_drive_idx].base_port, 2, 1, (uint64_t)boot_sec);
+                                            fs_read_sectors(active_drive_idx, 2, (_184*)boot_sec, 1);
                                             _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                                             analyze_gpt_entries(boot_sec);
                                             /// 3. Den VBR der gefundenen Partition lesen!
                                             _15(gpt_partition_lba > 0) {
                                                 _39(_43 b=0; b<512; b++) boot_sec[b] = 0;
-                                                ahci_read_sectors(drives[active_drive_idx].base_port, gpt_partition_lba, 1, (uint64_t)boot_sec);
+                                                fs_read_sectors(active_drive_idx, gpt_partition_lba, (_184*)boot_sec, 1);
                                                 _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                                                 analyze_vbr(boot_sec);
                                                 /// 4. MFT Record 5 lesen (Das Root-Verzeichnis!)
                                                 _15(mft_start_lba > 0) {
                                                     _39(_43 b=0; b<1024; b++) boot_sec[b] = 0;
                                                     _89 record_5_lba = mft_start_lba + 10;
-                                                    ahci_read_sectors(drives[active_drive_idx].base_port, record_5_lba, 2, (uint64_t)boot_sec);
+                                                    fs_read_sectors(active_drive_idx, record_5_lba, (_184*)boot_sec, 2);
                                                     _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                                                     analyze_mft_root(boot_sec);
                                                     is_ntfs = 1;
@@ -2688,7 +2693,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                             is_cfs = _128;
                                             _184 cfs_buf[512];
                                             /// Lese das Inhaltsverzeichnis (Sektor 1002) in den RAM
-                                            ahci_read_sectors(drives[active_drive_idx].base_port, 1002, 1, (uint64_t)cfs_buf);
+                                            fs_read_sectors(active_drive_idx, 1002, (_184*)cfs_buf, 4);
                                             _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
                                             CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)cfs_buf;
                                             _39(_43 i=0; i<28; i++) {
@@ -2704,18 +2709,8 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                                     file_table[i].exists = _86;
                                                 }
                                             }
-                                        } 
-                                        /// Test 1: Kein Umschlag, direkt das Dateisystem (Super-Floppy)
-                                        _41 _15(boot_sec[82] EQ 'F' AND boot_sec[83] EQ 'A' AND boot_sec[84] EQ 'T') {
-                                            fat_boot_lba = 0; is_fat32 = _128;
-                                        } _41 _15(boot_sec[3] EQ 'E' AND boot_sec[4] EQ 'X' AND boot_sec[5] EQ 'F') {
-                                            fat_boot_lba = 0; is_exfat = _128;
-                                        } _41 _15(boot_sec[3] EQ 'N' AND boot_sec[4] EQ 'T' AND boot_sec[5] EQ 'F' AND boot_sec[6] EQ 'S') {
-                                            fat_boot_lba = 0; is_ntfs = _128;
-											_89 mft_lba = fat_boot_lba + *(_89*)&boot_sec[48]; /// Offset 48: Cluster-Adresse der $MFT
-											_43 clusters_per_mft_record = boot_sec[64];       /// Meistens negativ für Byte-Größe
                                         } _41 {
-                                            /// Test 2: Es ist ein echter MBR/GPT Umschlag! Wir lesen die Tabelle.
+                                            /// Test 1: MBR Partitionstabelle prüfen!
                                             _184 part_type = boot_sec[446 + 4];
                                             _15(part_type EQ 0xEE) {
                                                 /// --- BARE METAL FIX: GPT PROTECTIVE MBR GEFUNDEN!
@@ -2725,7 +2720,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                                 file_table[1].exists = _128; file_table[1].parent_idx = 255; file_table[1].is_folder = _86;
                                                 str_cpy(file_table[1].name, "WINDOWS 11"); file_table[1].size = 0; str_cpy(file_table[1].date, "LOCKED");
                                                 is_ntfs = _128; /// Trick, damit er nicht ins CFS-Fallback (RAW) rutscht
-                                                is_gpt = _128;  /// Unser Reminder für die Zukunft!                                                
+                                                is_gpt = _128;  /// Unser Reminder für die Zukunft!                 
                                             } _41 _15(part_type EQ 0x83) {
                                                 /// 0x83 = Linux Native Partition (ext2/3/4)
                                                 is_ext = _128;
@@ -2738,6 +2733,17 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                                     is_exfat = _128; 
                                                 } _41 _15(boot_sec[3] EQ 'N' AND boot_sec[4] EQ 'T' AND boot_sec[5] EQ 'F') {
                                                     is_ntfs = _128; /// Klassisches MBR Windows
+                                                }
+                                            } _41 {
+                                                /// Test 2: Kein Umschlag, direkt das Dateisystem (Super-Floppy)
+                                                _15(boot_sec[82] EQ 'F' AND boot_sec[83] EQ 'A' AND boot_sec[84] EQ 'T') {
+                                                    fat_boot_lba = 0; is_fat32 = _128;
+                                                } _41 _15(boot_sec[3] EQ 'E' AND boot_sec[4] EQ 'X' AND boot_sec[5] EQ 'F') {
+                                                    fat_boot_lba = 0; is_exfat = _128;
+                                                } _41 _15(boot_sec[3] EQ 'N' AND boot_sec[4] EQ 'T' AND boot_sec[5] EQ 'F' AND boot_sec[6] EQ 'S') {
+                                                    fat_boot_lba = 0; is_ntfs = _128;
+                                                    _89 mft_lba = fat_boot_lba + *(_89*)&boot_sec[48]; /// Offset 48: Cluster-Adresse der $MFT
+                                                    _43 clusters_per_mft_record = boot_sec[64];       /// Meistens negativ für Byte-Größe
                                                 }
                                             }
                                         } /// <-- ENDE TEST 2
@@ -2886,7 +2892,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                         str_cpy(file_table[1].name, "INSTALLER"); file_table[1].size = 0; str_cpy(file_table[1].date, "READY");
                                         /// --- FALLBACK: CFS INHALTSVERZEICHNIS LADEN ---
                                         _184 cfs_buf[512];
-                                        fs_read_sectors(active_drive_idx, 1002, (_184*)cfs_buf, 1);
+                                        fs_read_sectors(active_drive_idx, 1002, (_184*)cfs_buf, 4);
                                         _30* src = (_30*)cfs_buf;
                                         _30* dst = (_30*)file_table;
                                         _39(_43 i=0; i<sizeof(file_table); i++) dst[i] = src[i];
@@ -2981,7 +2987,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                             _15(input_cooldown EQ 0 AND mouse_just_pressed AND !blocked AND !(windows[10].open AND !windows[10].minimized) AND is_over_rect(mouse_x, mouse_y, wx+100, wy+40, 60, 20)) {
                                 _43 port = drives[active_drive_idx].base_port;
                                 _89 dir_buffer = 0x07000000;
-                                ahci_read_sectors(port, 1002, 1, dir_buffer);
+                                ahci_read_sectors(port, 1002, 4, dir_buffer);
                                 _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                 CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_buffer;
                                 _43 free_slot = 255;
@@ -2991,7 +2997,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                     str_cpy(entries[free_slot].filename, "new_file.txt");
                                     entries[free_slot].file_size = 0;
                                     entries[free_slot].start_lba = 4000 + free_slot;
-                                    ahci_write_sectors(port, 1002, 1, dir_buffer);
+                                    ahci_write_sectors(port, 1002, 4, dir_buffer);
                                     _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                     file_table[free_slot].exists = _128;
                                     file_table[free_slot].is_folder = _86;
@@ -3008,7 +3014,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                             _15(input_cooldown EQ 0 AND mouse_just_pressed AND !blocked AND !(windows[10].open AND !windows[10].minimized) AND is_over_rect(mouse_x, mouse_y, wx+170, wy+40, 60, 20)) {
                                 _43 port = drives[active_drive_idx].base_port;
                                 _89 dir_buffer = 0x07000000;
-                                ahci_read_sectors(port, 1002, 1, dir_buffer);
+                                ahci_read_sectors(port, 1002, 4, dir_buffer);
                                 _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                 CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_buffer;
                                 _43 free_slot = 255;
@@ -3018,7 +3024,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                     str_cpy(entries[free_slot].filename, "new_folder");
                                     entries[free_slot].file_size = 0; 
                                     entries[free_slot].start_lba = 0;
-                                    ahci_write_sectors(port, 1002, 1, dir_buffer);
+                                    ahci_write_sectors(port, 1002, 4, dir_buffer);
                                     _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                     file_table[free_slot].exists = _128;
                                     file_table[free_slot].is_folder = _128;
@@ -3070,11 +3076,11 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                     _15(input_cooldown EQ 0 AND mouse_just_pressed AND !blocked AND !(windows[10].open AND !windows[10].minimized) AND is_over_rect(mouse_x, mouse_y, wx+350, y_off+2, 50, 16)) {
                                         _43 port = drives[active_drive_idx].base_port;
                                         _89 dir_ram_addr = 0x07000000;
-                                        ahci_read_sectors(port, 1002, 1, dir_ram_addr);
+                                        ahci_read_sectors(port, 1002, 4, dir_ram_addr);
                                         _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                         CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_ram_addr;
                                         entries[f].type = 0;
-                                        ahci_write_sectors(port, 1002, 1, dir_ram_addr);
+                                        ahci_write_sectors(port, 1002, 4, dir_ram_addr);
                                         _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                         file_table[f].exists = _86; 
                                         file_selection = -1;
@@ -3153,7 +3159,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                         _15(dest_port NEQ 0) {
                                             /// 3. Freien Slot im CFS Verzeichnis suchen
                                             _89 dir_buffer = 0x07000000;
-                                            ahci_read_sectors(dest_port, 1002, 1, dir_buffer);
+                                            ahci_read_sectors(dest_port, 1002, 4, dir_buffer);
                                             _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                             
                                             CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_buffer;
@@ -3169,7 +3175,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                                 str_cpy(entries[free_slot].filename, file_table[f].name);
                                                 entries[free_slot].file_size = file_table[f].size;
                                                 entries[free_slot].start_lba = dest_lba;
-                                                ahci_write_sectors(dest_port, 1002, 1, dir_buffer);
+                                                ahci_write_sectors(dest_port, 1002, 4, dir_buffer);
                                             }
                                         }
                                         input_cooldown = 20;
@@ -3198,7 +3204,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                             _39(_43 i=0; i < (num_sectors * 512); i++) text_buffer[i] = 0;
                                             /// BARE METAL FIX: Universeller DMA Reader für CFS & FAT32!
                                             /// Die Hardware liest einfach stumpf ab dem errechneten Sektor
-                                            ahci_read_sectors(drives[active_drive_idx].base_port, start_lba, num_sectors, text_ram_addr);
+                                            fs_read_sectors(active_drive_idx, start_lba, (_184*)text_ram_addr, num_sectors);
                                             _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                             _43 idx = 0; 
                                             _39(_43 r=0; r<10; r++) { 
@@ -3327,11 +3333,11 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                             _15(drives[active_drive_idx].model[1] EQ 'C' AND drives[active_drive_idx].model[2] EQ 'F' AND drives[active_drive_idx].model[3] EQ 'S') {
                                                 _43 port = drives[active_drive_idx].base_port;
                                                 _89 dir_ram_addr = 0x07000000;
-                                                ahci_read_sectors(port, 1002, 1, dir_ram_addr);
+                                                ahci_read_sectors(port, 1002, 4, dir_ram_addr);
                                                 _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                                 CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_ram_addr;
                                                 entries[f].type = 0;
-                                                ahci_write_sectors(port, 1002, 1, dir_ram_addr);
+                                                ahci_write_sectors(port, 1002, 4, dir_ram_addr);
                                                 _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                                                 file_table[f].exists = _86;
                                                 file_selection = -1;
@@ -3921,22 +3927,32 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                             /// BARE METAL FIX: Laufwerk wechseln & Liste sauber laden!
                             /// ==========================================
                             _89 dir_ram_addr = 0x07000000;
-                            ahci_read_sectors(drives[active_drive_idx].base_port, 1002, 1, dir_ram_addr);
-                            _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
-                            CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_ram_addr;
-                            _39(_43 i=0; i<28; i++) {
-                                _15(entries[i].type NEQ 0) {
-                                    file_table[i].exists = _128;
-                                    file_table[i].parent_idx = 255; /// 255 = Root Directory
-                                    file_table[i].is_folder = (entries[i].type EQ 2) ? _128 : _86;
-                                    str_cpy(file_table[i].name, entries[i].filename);
-                                    /// BARE METAL FIX: Diese 3 Zeilen haben gefehlt!
-                                    file_table[i].size = entries[i].file_size;
-                                    file_table[i].sector_offset = entries[i].start_lba;
-                                    str_cpy(file_table[i].date, "DMA");
-                                } _41 {
-                                    file_table[i].exists = _86;
+                            fs_read_sectors(active_drive_idx, 1002, (_184*)dir_ram_addr, 4);
+                            _44 has_cfs = _86;
+                            _39(_43 c=0; c<35; c++) {
+                                _15(drives[active_drive_idx].model[c] EQ 'C' AND drives[active_drive_idx].model[c+1] EQ 'F' AND drives[active_drive_idx].model[c+2] EQ 'S') has_cfs = _128;
+                            }
+                            _15(has_cfs) {
+                                _89 dir_ram_addr = 0x07000000;
+                                fs_read_sectors(active_drive_idx, 1002, (_184*)dir_ram_addr, 4);
+                                _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
+                                CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_ram_addr;
+                                _39(_43 i=0; i<28; i++) {
+                                    _15(entries[i].type NEQ 0) {
+                                        file_table[i].exists = _128;
+                                        file_table[i].parent_idx = 255; /// 255 = Root Directory
+                                        file_table[i].is_folder = (entries[i].type EQ 2) ? _128 : _86;
+                                        str_cpy(file_table[i].name, entries[i].filename);
+                                        /// BARE METAL FIX: Diese 3 Zeilen haben gefehlt!
+                                        file_table[i].size = entries[i].file_size;
+                                        file_table[i].sector_offset = entries[i].start_lba;
+                                        str_cpy(file_table[i].date, "DMA");
+                                    } _41 {
+                                        file_table[i].exists = _86;
+                                    }
                                 }
+                            } _41 {
+                                _39(_43 i=0; i<28; i++) file_table[i].exists = _86;
                             }
                             current_path_id = 255; 
                             input_cooldown = 10;
@@ -3987,7 +4003,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                             }
                             /// 2. CFS Inhaltsverzeichnis (Sektor 1002) in den RAM lesen
                             _89 dir_ram_addr = 0x07000000;
-                            ahci_read_sectors(port, 1002, 1, dir_ram_addr);
+                            ahci_read_sectors(port, 1002, 4, dir_ram_addr);
                             _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                             /// 3. Freien Datei-Slot suchen
                             CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_ram_addr;
@@ -4005,7 +4021,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                 str_cpy(entries[slot].filename, save_filename);
                                 entries[slot].file_size = 512;
                                 entries[slot].start_lba = target_sec;
-                                ahci_write_sectors(port, 1002, 1, dir_ram_addr);
+                                ahci_write_sectors(port, 1002, 4, dir_ram_addr);
                                 /// ==========================================
                                 /// BARE METAL FIX: RAM-Tabelle für Textdateien synchronisieren!
                                 /// ==========================================
@@ -4034,7 +4050,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                             _43 port = drives[active_drive_idx].base_port;
                             _89 dir_ram_addr = 0x07000000;
                             /// 1. Inhaltsverzeichnis laden
-                            ahci_read_sectors(port, 1002, 1, dir_ram_addr);
+                            ahci_read_sectors(port, 1002, 4, dir_ram_addr);
                             _39(_192 _43 wait=0; wait<500000; wait++) __asm__ _192("nop");
                             CFS_DIR_ENTRY* entries = (CFS_DIR_ENTRY*)dir_ram_addr;
                             _43 slot = 255;
@@ -4048,7 +4064,7 @@ _172 "C" _50 kernel_main(_89 magic, multiboot_info* mbi) {
                                 str_cpy(entries[slot].filename, new_folder_name);
                                 entries[slot].file_size = 0;
                                 entries[slot].start_lba = 0; /// Ordner haben keine Daten in Sektor 4000+
-                                ahci_write_sectors(port, 1002, 1, dir_ram_addr);
+                                ahci_write_sectors(port, 1002, 4, dir_ram_addr);
                                 str_cpy(save_timestamp, "CFS: FOLDER CREATED!");
                             } _41 {
                                 str_cpy(save_timestamp, "CFS: ROOT DIR FULL!");

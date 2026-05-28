@@ -253,7 +253,7 @@ _50 fs_read_sectors(_43 drive_idx, _89 lba, _184* buf, _43 count) {
     _43 d_type = drives[drive_idx].type;
     _43 d_port = drives[drive_idx].base_port;
     /// --- SATA / AHCI PLATTEN ---
-    _15(d_type EQ 0 OR d_type EQ 1) {
+    _15(d_type EQ 0 OR d_type EQ 1 OR d_type EQ 2) {
         ahci_read_sectors(d_port, lba, count, (_89)(uint64_t)buf);
     }
     /// --- BARE METAL FIX: DER USB-WEG ---

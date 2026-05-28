@@ -58,68 +58,9 @@ _202 DriveInfo { _43 type; _43 size_mb; _43 base_port; _30 model[41]; };
 _172 DriveInfo drives[8];
 _172 _43 drive_count;
 #pragma pack(push, 1)
-/// Die Struktur für einen Long File Name (LFN) Fake-Eintrag
-_202 FAT32_LFN_Entry {
-    _184 sequence_number; /// Welche Nummer hat dieser Teil des Namens? (Bit 6 = Letzter Teil)
-    _182 name_part_1[5];  /// Erste 5 Zeichen (Unicode, je 2 Bytes)
-    _184 attr;            /// IMMER 0x0F für LFN
-    _184 reserved_1;      /// Immer 0x00
-    _184 checksum;        /// Prüfsumme des 8.3 Kurznamens
-    _182 name_part_2[6];  /// Nächste 6 Zeichen (Unicode)
-    _182 reserved_2;      /// Immer 0x0000
-    _182 name_part_3[2];  /// Letzte 2 Zeichen (Unicode)
-} __attribute__((packed));
-#pragma pack(pop)
 /// ==========================================
-/// FAT32 STRUKTUREN
-/// ==========================================
-#pragma pack(push, 1)
-/// Der BIOS Parameter Block (Sektor 0 einer FAT32 Partition)
-_202 FAT32_BPB {
-    _184 jmp[3];
-    _30  oem_name[8];
-    _182 bytes_per_sector;
-    _184 sectors_per_cluster;
-    _182 reserved_sectors;
-    _184 fat_count;
-    _182 root_dir_entries;
-    _182 total_sectors_16;
-    _184 media_type;
-    _182 sectors_per_fat_16;
-    _182 sectors_per_track;
-    _182 heads;
-    _43  hidden_sectors;
-    _43  total_sectors_32;
-    _43  sectors_per_fat_32; /// WICHTIG für FAT32!
-    _182 ext_flags;
-    _182 fs_version;
-    _43  root_cluster;       /// Wo fängt das Hauptverzeichnis an?
-    _182 fs_info;
-    _182 backup_boot_sector;
-    _184 reserved[12];
-    _184 drive_number;
-    _184 reserved1;
-    _184 boot_signature;     /// Sollte 0x29 sein
-    _43  volume_id;
-    _30  volume_label[11];
-    _30  fs_type[8];         /// Hier steht "FAT32   "
-} __attribute__((packed));
-/// Ein Eintrag im Verzeichnis (Eine Datei oder ein Ordner)
-_202 FAT32_DirectoryEntry {
-    _30  name[11];           /// 8 Zeichen Name, 3 Zeichen Endung (z.B. "KERNEL  BIN")
-    _184 attr;               /// Attribute (0x10 = Ordner, 0x20 = Archiv)
-    _184 reserved;
-    _184 create_time_tenths;
-    _182 create_time;
-    _182 create_date;
-    _182 access_date;
-    _182 cluster_high;       /// Wo liegen die Daten der Datei? (Obere 16 Bit)
-    _182 modify_time;
-    _182 modify_date;
-    _182 cluster_low;        /// Wo liegen die Daten der Datei? (Untere 16 Bit)
-    _43  size;               /// Dateigröße in Bytes
-} __attribute__((packed));
-#pragma pack(pop)
+/// FAT32 STRUKTUREN WURDEN INS HEADER FILE AUSGELAGERT
+/// =================================================
 /// ==========================================
 /// BARE METAL FIX: SCHNELLES REBASE
 /// ==========================================
@@ -128,7 +69,7 @@ _50 ahci_port_rebase(HBA_PORT *port, _43 port_no) {
     port->cmd &= ~0x0001;
     port->cmd &= ~0x0010;
     /// Warten bis der Controller den Stop bestätigt (Bit 14 & 15)
-    _43 timeout = 100000;
+    _43 timeout = 5000000;
     _114 ((port->cmd & 0xC000) AND timeout > 0) { timeout--; }
     /// 2. Speicher-Layout (32 KB Abstand pro Port)
     /// Das verhindert die Spiegelung zu 100%
@@ -682,29 +623,7 @@ extern "C" _50 ahci_mount_drive() {
                      model[last_char] = 0; last_char--;
                  }
                  _15(model[0] EQ 0) str_cpy(model, "UNKNOWN DRIVE");
-                 _15(sig NEQ 0xEB140101) { 
-                     _39(_43 b=0; b<512; b++) bptr[b] = 0; 
-                     _39(_43 j=0; j<32; j++) cmd_table[j] = 0;
-                     cmd_table[0] = 0x00258027; cmd_table[1] = 0x40000000; cmd_table[2] = 0; cmd_table[3] = 1; 
-                     prdt[0] = data_buffer_addr; prdt[1] = 0; prdt[2] = 0; prdt[3] = 511 | 0x80000000;
-                     __asm__ _192("wbinvd" ::: "memory"); /// VORHER FLUSHEN
-                     port_regs[12] = 0xFFFFFFFF; port_regs[14] = 1;
-                     timeout = 1000000; 
-                     _114((port_regs[14] & 1) AND timeout > 0) timeout--;
-                     __asm__ _192("wbinvd" ::: "memory");
-                     _15(timeout > 0 AND !(port_regs[4] & 0x40000000)) {
-                         _15(byte_buf[510] EQ 0x55 AND byte_buf[511] EQ 0xAA) {
-                             _30 fs_string[15]; str_cpy(fs_string, " [RAW]"); 
-                             _15(byte_buf[82] EQ 'F' AND byte_buf[83] EQ 'A' AND byte_buf[84] EQ 'T' AND byte_buf[85] EQ '3') str_cpy(fs_string, " [FAT32]");
-                             _41 _15(byte_buf[3] EQ 'C' AND byte_buf[4] EQ 'F' AND byte_buf[5] EQ 'S') {
-                                 str_cpy(fs_string, " [CFS]");
-                             }
-                             _43 m_len = 0; _114(model[m_len] NEQ 0) m_len++;
-                             _43 fs_len = 0; _114(fs_string[fs_len] NEQ 0) { model[m_len++] = fs_string[fs_len++]; }
-                             model[m_len] = 0;
-                         }
-					 }
-                 } _41 {
+                 _15(sig EQ 0xEB140101) {
                      _43 m_len = 0; _114(model[m_len] NEQ 0) m_len++;
                      _30 cd_str[] = " [ISO9660]";
                      _43 c_idx = 0; _114(cd_str[c_idx] NEQ 0) { model[m_len++] = cd_str[c_idx++]; }
@@ -718,6 +637,15 @@ extern "C" _50 ahci_mount_drive() {
                      drive_count++; 
                      found++;
                  }
+            } _41 {
+                 _15(drive_count < 8) {
+                     drives[drive_count].type = 2;
+                     drives[drive_count].size_mb = 0;
+                     drives[drive_count].base_port = i;
+                     _15(timeout EQ 0) str_cpy(drives[drive_count].model, "SATA ERROR: TIMEOUT");
+                     _41 str_cpy(drives[drive_count].model, "SATA ERROR: TFES (BUSY)");
+                     drive_count++;
+                 }
             }
         }
     }
@@ -727,120 +655,69 @@ extern "C" _50 ahci_mount_drive() {
 /// ==========================================
 /// BARE METAL FIX: SEKTOR 0 DATEISYSTEM ERKENNUNG
 /// ==========================================
+extern _50 fs_read_sectors(_43 drive_idx, _89 lba, _184* buf, _43 count);
+
 _50 ahci_read_mbr() {
     _15(drive_count EQ 0) {
         str_cpy(cmd_status, "ERROR: NO DRIVES MOUNTED");
         _96;
     }
-    _15(global_ahci_abar EQ 0) {
-        str_cpy(cmd_status, "ERROR: ABAR IS NULL");
-        _96;
-    }
-    _192 _89* abar = (_192 _89*)global_ahci_abar;
     /// Wir rastern jetzt alle Platten ab, die wir im Disk Manager (drives[]) haben!
     _39(_43 d = 0; d < drive_count; d++) {
-        _43 port_no = drives[d].base_port;
-        _192 _89* port_regs = abar + 64 + (port_no * 32);
-        /// ==========================================
-        /// 1. BRIEFKASTEN FÜR READ DMA EXT (0x25)
-        /// Wir nutzen für jeden Port seinen EIGENEN 4MB Offset,
-        /// damit sich die gelesenen Sektoren nicht spiegeln!
-        /// ==========================================
-        _43 cmd_list_addr = 0x400000 + (port_no * 1024);  
-        _43 fis_base_addr = 0x408000 + (port_no * 256); 
-        _43 cmd_table_addr = 0x410000 + (port_no * 8192); 
-        _43 data_buffer_addr = 0x500000 + (port_no * 512); /// Puffer für Sektor 0 bei 5 MB!
-        /// Puffer blitzblank putzen
-        _89* bptr = (_89*)data_buffer_addr;
-        _39(_43 i=0; i<128; i++) bptr[i] = 0;
-        port_regs[0] = cmd_list_addr;     
-        port_regs[1] = 0;                 
-        port_regs[2] = fis_base_addr;     
-        port_regs[3] = 0;
-        _192 _89* cmd_header = (_192 _89*)cmd_list_addr;
-        cmd_header[0] = 5 | (1 << 16) | 0x400; /// 5 Dwords, Read (Bit 16 aus), 1 PRDT Entry
-        cmd_header[1] = 0; 
-        cmd_header[2] = cmd_table_addr; 
-        cmd_header[3] = 0;
-        _192 _89* cmd_table = (_192 _89*)cmd_table_addr;
-        /// BARE METAL FIX: Type 0x27 (H2D FIS), Command 0x25 (READ DMA EXT)
-        cmd_table[0] = 0x00258027; 
-        cmd_table[1] = 0x40000000; /// LBA 0 (Sektor 0), LBA Mode an (Bit 6 in Dev-Reg)
-        cmd_table[2] = 0x00000000; /// LBA High
-        cmd_table[3] = 0x00000001; /// Sektor Count: Genau 1 Sektor!
-        _192 _89* prdt = (_192 _89*)(cmd_table_addr + 128);
-        prdt[0] = data_buffer_addr; 
-        prdt[1] = 0;
-        prdt[2] = 0;
-        prdt[3] = 511;
-        _43 timeout = 1000000;
-        _114((port_regs[8] & 0x88) AND timeout > 0) timeout--;
-        port_regs[12] = 1;
-        timeout = 1000000;
-        _114((port_regs[12] & 1) AND timeout > 0) {
-             _15(port_regs[13] & 0x40000000) _37; /// Read Error
-             timeout--;
-        }
-        /// ==========================================
-        /// 2. SEKTOR 0 AUSWERTEN (_192 Puffer!)
-        /// ==========================================
-        _15(timeout > 0 AND !(port_regs[13] & 0x40000000)) {
-            _192 _184* byte_buf = (_192 _184*)data_buffer_addr;
+        _192 _184* byte_buf = (_192 _184*)0x500000; /// BARE METAL FIX: Niemals Stack-Speicher für DMA nutzen!
+        _39(_43 i=0; i<512; i++) byte_buf[i] = 0;
+        
+        /// BARE METAL FIX: Verwende fs_read_sectors für ALLE Laufwerke (SATA + USB)
+        fs_read_sectors(d, 0, (_184*)byte_buf, 1);
+        _39(_192 _43 wait = 0; wait < 1000000; wait++) __asm__ _192("nop");
+        
+        /// Ist es überhaupt ein gültiger Bootsektor? (Byte 510 und 511 müssen 55 AA sein)
+        _15(byte_buf[510] EQ 0x55 AND byte_buf[511] EQ 0xAA) {
+            _30 fs_string[15];
+            str_cpy(fs_string, "[RAW]");
             
-            /// Ist es überhaupt ein gültiger Bootsektor? (Byte 510 und 511 müssen 55 AA sein)
-            _15(byte_buf[510] EQ 0x55 AND byte_buf[511] EQ 0xAA) {
-                /// BARE METAL FIX: Puffer auf 15 vergrößert für längere Labels!
-                _30 fs_string[15];
-                str_cpy(fs_string, "[RAW]");
-                
+            /// ----------------------------------------------------
+            /// CHECK 1: PARTITIONIERT (MBR oder GPT auf LBA 0)
+            /// ----------------------------------------------------
+            _184 part_type = byte_buf[446 + 4];
+            
+            _15(part_type EQ 0xEE) {
+                str_cpy(fs_string, "[GPT]");
+            } _41 _15(part_type EQ 0x07) {
+                str_cpy(fs_string, "[NTFS]");
+            } _41 _15(part_type EQ 0x0B OR part_type EQ 0x0C) {
+                str_cpy(fs_string, "[FAT32]");
+            } _41 _15(part_type EQ 0x83) {
+                str_cpy(fs_string, "[EXT]");
+            } _41 _15(part_type NEQ 0x00) {
+                str_cpy(fs_string, "[MBR]");
+            } _41 {
                 /// ----------------------------------------------------
-                /// CHECK 1: SUPER-FLOPPY (Dateisystem direkt auf LBA 0)
+                /// CHECK 2: SUPER-FLOPPY (Dateisystem direkt auf LBA 0)
                 /// ----------------------------------------------------
                 _15(byte_buf[82] EQ 'F' AND byte_buf[83] EQ 'A' AND byte_buf[84] EQ 'T' AND byte_buf[85] EQ '3' AND byte_buf[86] EQ '2') {
                     str_cpy(fs_string, "[FAT32]");
-                }
-                _41 _15(byte_buf[3] EQ 'E' AND byte_buf[4] EQ 'X' AND byte_buf[5] EQ 'F' AND byte_buf[6] EQ 'A' AND byte_buf[7] EQ 'T') {
+                } _41 _15(byte_buf[3] EQ 'E' AND byte_buf[4] EQ 'X' AND byte_buf[5] EQ 'F' AND byte_buf[6] EQ 'A' AND byte_buf[7] EQ 'T') {
                     str_cpy(fs_string, "[exFAT]");
-                }
-                _41 _15(byte_buf[3] EQ 'N' AND byte_buf[4] EQ 'T' AND byte_buf[5] EQ 'F' AND byte_buf[6] EQ 'S') {
+                } _41 _15(byte_buf[3] EQ 'N' AND byte_buf[4] EQ 'T' AND byte_buf[5] EQ 'F' AND byte_buf[6] EQ 'S') {
                     str_cpy(fs_string, "[NTFS]");
-                }
-                _41 _15(byte_buf[3] EQ 'C' AND byte_buf[4] EQ 'F' AND byte_buf[5] EQ 'S') {
+                } _41 _15(byte_buf[3] EQ 'C' AND byte_buf[4] EQ 'F' AND byte_buf[5] EQ 'S') {
                     str_cpy(fs_string, "[CFS]");
                 }
-                /// ----------------------------------------------------
-                /// CHECK 2: PARTITIONIERT (MBR oder GPT auf LBA 0)
-                /// ----------------------------------------------------
-                _41 {
-                    /// Wir lesen den Typ der ersten Partition aus der MBR-Tabelle!
-                    _184 part_type = byte_buf[446 + 4];
-                    
-                    _15(part_type EQ 0xEE) {
-                        str_cpy(fs_string, "[GPT]");
-                    } _41 _15(part_type EQ 0x07) {
-                        str_cpy(fs_string, "[NTFS]");
-                    } _41 _15(part_type EQ 0x0B OR part_type EQ 0x0C) {
-                        str_cpy(fs_string, "[FAT32]");
-                    } _41 _15(part_type EQ 0x83) {
-                        str_cpy(fs_string, "[EXT]");
-                    } _41 _15(part_type NEQ 0x00) {
-                        str_cpy(fs_string, "[MBR]");
-                    }
-                }
-
-                /// Den FS-String an das Modell anhängen
-                _43 m_len = 0;
-                _114(drives[d].model[m_len] NEQ 0 AND m_len < 30) m_len++;
-                
-                _43 fs_len = 0;
-                _114(fs_string[fs_len] NEQ 0) {
-                    drives[d].model[m_len++] = fs_string[fs_len++];
-                }
-                drives[d].model[m_len] = 0;
-                str_cpy(cmd_status, "FS SCANNED!");
             }
+
+            /// Den FS-String an das Modell anhängen
+            _43 m_len = 0;
+            _114(drives[d].model[m_len] NEQ 0 AND m_len < 30) m_len++;
+            
+            _43 fs_len = 0;
+            _114(fs_string[fs_len] NEQ 0) {
+                drives[d].model[m_len++] = fs_string[fs_len++];
+            }
+            drives[d].model[m_len] = 0;
+            str_cpy(cmd_status, "FS SCANNED!");
         }
-	}
+    }
 }
 _50 ahci_panzer_scan_tick() {
     _15(ahci_scan_state EQ 0 OR global_ahci_abar EQ 0) _96;

@@ -5,6 +5,65 @@
 #include "arcade.h"
 #include <stdint.h>
 #include <stddef.h>
+
+#pragma pack(push, 1)
+_202 FAT32_BPB {
+    _184 jmp[3];
+    _30  oem_name[8];
+    _182 bytes_per_sector;
+    _184 sectors_per_cluster;
+    _182 reserved_sectors;
+    _184 fat_count;
+    _182 root_dir_entries;
+    _182 total_sectors_16;
+    _184 media_type;
+    _182 sectors_per_fat_16;
+    _182 sectors_per_track;
+    _182 heads;
+    _43  hidden_sectors;
+    _43  total_sectors_32;
+    _43  sectors_per_fat_32;
+    _182 ext_flags;
+    _182 fs_version;
+    _43  root_cluster;
+    _182 fs_info;
+    _182 backup_boot_sector;
+    _184 reserved[12];
+    _184 drive_number;
+    _184 reserved1;
+    _184 boot_signature;
+    _43  volume_id;
+    _30  volume_label[11];
+    _30  fs_type[8];
+} __attribute__((packed));
+
+_202 FAT32_DirectoryEntry {
+    _30  name[11];
+    _184 attr;
+    _184 reserved;
+    _184 create_time_tenths;
+    _182 create_time;
+    _182 create_date;
+    _182 access_date;
+    _182 cluster_high;
+    _182 modify_time;
+    _182 modify_date;
+    _182 cluster_low;
+    _43  size;
+} __attribute__((packed));
+
+_202 FAT32_LFN_Entry {
+    _184 sequence_number;
+    _182 name_part_1[5];
+    _184 attr;
+    _184 reserved_1;
+    _184 checksum;
+    _182 name_part_2[6];
+    _182 reserved_2;
+    _182 name_part_3[2];
+} __attribute__((packed));
+#pragma pack(pop)
+
 /// ==========================================
 /// BARE METAL FIX: EXTERNE LAUFWERKS-BRÜCKE
 /// ==========================================
@@ -142,6 +201,7 @@ struct Task {
     uint64_t rsp;          /// 64-Bit Pointer für den Stack
     uint8_t stack[8192];   /// 8 KB eigener Arbeitsspeicher pro Task
     bool active;
+    bool paused;           /// BARE METAL FIX: Pause-Flag
 };
 
 Task tasks[4];             
@@ -176,12 +236,20 @@ void create_task(void (*entry_point)()) {
     // 1. Timer anhalten, Lebensgefahr!
     __asm__ volatile("cli"); 
     
-    if (num_tasks >= 4) {
+    int id = -1;
+    for (int i = 1; i < 4; i++) {
+        if (!tasks[i].active) {
+            id = i;
+            break;
+        }
+    }
+    if (id == -1 && num_tasks < 4) {
+        id = num_tasks;
+    }
+    if (id == -1) {
         __asm__ volatile("sti");
         return;
     }
-    
-    int id = num_tasks; 
     
     // ==========================================
     // BARE METAL FIX: DER KUGELSICHERE STACK
@@ -219,7 +287,8 @@ void create_task(void (*entry_point)()) {
     // Task eintragen und scharf schalten
     tasks[id].rsp = (uint64_t)frame;
     tasks[id].active = true;
-    num_tasks++; 
+    tasks[id].paused = false;
+    if (id >= num_tasks) num_tasks = id + 1;
     
     // 2. Timer wieder an! Auf in die Schlacht!
     __asm__ volatile("sti"); 
@@ -230,10 +299,17 @@ extern "C" uint64_t schedule(uint64_t old_rsp) {
     
     tasks[current_task].rsp = old_rsp;
     
-    current_task++;
-    if (current_task >= num_tasks || !tasks[current_task].active) {
-        current_task = 0;
+    // Nächsten aktiven und NICHT pausierten Task suchen!
+    for (int i = 0; i < num_tasks; i++) {
+        current_task++;
+        if (current_task >= num_tasks) current_task = 0;
+        if (tasks[current_task].active && !tasks[current_task].paused) {
+            break; // Gefunden!
+        }
     }
+    
+    // Falls alle pausiert sind (was nicht passieren sollte, da Task 0 (OS) nie pausiert),
+    // landen wir sicher wieder bei Task 0 oder dem letzten laufenden Task.
     
     return tasks[current_task].rsp;
 }
@@ -470,6 +546,8 @@ void mem_set(void* ptr, uint8_t value, uint32_t num) {
 }
 extern "C" _50 ahci_mount_drive();
 extern "C" _50 usb_scan_and_mount();
+extern _50 ahci_read_mbr();
+extern "C" void play_hda_wav(uint32_t pcm_addr, uint32_t size_bytes, uint16_t sample_rate, uint16_t channels, uint16_t bits);
 /// ==========================================
 /// 1. HEAP ALLOCATOR (64-BIT GEFIXT)
 /// ==========================================
@@ -927,6 +1005,7 @@ void scan_pci_drives(Window* dsk_win) {
                         pci_write(bus, slot, func, 0x04, cmd | 0x06);
                         uint32_t bar5 = pci_read(bus, slot, func, 0x24) & 0xFFFFFFF0;
                         active_ahci_bar5 = bar5;
+                        global_ahci_abar = bar5;
                         HBA_MEM* hba = (HBA_MEM*)bar5;
                         for(int i = 0; i < 32; i++) {
                             if(hba->pi & (1 << i)) {
@@ -1473,6 +1552,9 @@ _50 DrawOrganicPlanet(_43 cx, _43 cy, _43 radius, _89 base_col) {
 volatile uint32_t app_window_buffer[2500] = {0}; 
 volatile bool app_window_active = false;
 
+// BARE METAL FIX: Fullscreen Overlay Buffer für app.cpp (1.9 MB)
+volatile uint32_t* app_overlay_buffer = (uint32_t*)0x01500000;
+
 // 2. Deine kompilierte App als Hex-Array (Der echte Flummi)
 unsigned char app_bin[] = {
   0xf3, 0x0f, 0x1e, 0xfa, 0xb8, 0x04, 0x00, 0x00, 0x00, 0xcd, 0x80, 0x48,
@@ -1657,6 +1739,9 @@ extern "C" _44 disk_read_auto(_89 lba, _89 target_ram_addr) {
 /// ==========================================
 volatile char last_app_key = 0; 
 
+extern _50 play_sound(_89 n_freq, _43 duration);
+extern _50 play_freq(_89 f);
+
 extern "C" uint64_t syscall_dispatcher(uint64_t sys_num, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     if (sys_num == 0) { yield(); return 0; }
     else if (sys_num == 1) { print_win(&windows[5], (char*)arg1); return 0; }
@@ -1669,6 +1754,21 @@ extern "C" uint64_t syscall_dispatcher(uint64_t sys_num, uint64_t arg1, uint64_t
     else if (sys_num == 4) { 
         app_window_active = true; 
         return (uint64_t)(volatile void*)app_window_buffer; 
+    }
+    // Syscall 5: Fullscreen Overlay Buffer
+    else if (sys_num == 5) {
+        app_window_active = true;
+        return (uint64_t)(volatile void*)app_overlay_buffer;
+    }
+    // Syscall 6: Play Sound (Hz in arg1, ms in arg2)
+    else if (sys_num == 6) {
+        play_sound(arg1, arg2);
+        return 0;
+    }
+    // Syscall 7: Play Freq (Hz in arg1, non-blocking)
+    else if (sys_num == 7) {
+        play_freq(arg1);
+        return 0;
     }
     
     return 0;
@@ -2040,13 +2140,12 @@ void process_cmd(char* input, Window* cmd_win) {
     /// NEU: DER FESTPLATTEN-LOADER
     /// ==========================================
     else if(str_equal(input, "RUNAPP")) {
-        if (num_tasks < 4) {
-            // BARE METAL FIX: Wir starten den echten Hex-Code aus dem RAM!
-            create_task((void(*)())app_bin);
-            
-            print_win(cmd_win, "LOADING APP DIRECTLY FROM KERNEL RAM...\n");
+        // Lade app.bin direkt von der Festplatte (LBA 10000) in den RAM und starte sie!
+        bool success = load_and_run_bin(10000, 10);
+        if (success) {
+            print_win(cmd_win, "LOADING APP FROM DISK...\n");
         } else {
-            print_win(cmd_win, "ERROR: TASK LIMIT REACHED.\n");
+            print_win(cmd_win, "ERROR: FAILED TO LOAD APP OR TASK LIMIT REACHED.\n");
         }
     }
     /// ==========================================
@@ -2625,66 +2724,6 @@ extern "C" void main(BootInfo* boot_info) {
                 DrawPlanet3D(system[i].pos, system[i].radius, system[i].color, v_cx, v_cy);
             }
         }
-		// ==========================================
-        // 7. 3D POLYGON-TEST: IMPERIALER STERNENKREUZER / ZERSTÖRER
-        // ==========================================
-        //float station_rot = frame * 0.025f; // Etwas langsamer für die massive Wucht!
-        //float sr = bare_sin(station_rot);
-        //float cr = bare_cos(station_rot);
-		//
-        //// Der Bauplan: 10 strategische Eckpunkte im 3D-Raum
-        //Vec3 ship[10] = {
-        //    {   0.0f,   0.0f,  110.0f},  // 0: Die rasiermesserscharfe Bugspitze (Nose)
-        //    { -50.0f,   5.0f,  -50.0f},  // 1: Heck oben links
-        //    {  50.0f,   5.0f,  -50.0f},  // 2: Heck oben rechts
-        //    { -50.0f,  -5.0f,  -50.0f},  // 3: Heck unten links
-        //    {  50.0f,  -5.0f,  -50.0f},  // 4: Heck unten rechts
-        //    {   0.0f,  28.0f,  -25.0f},  // 5: Kommandobrücke Dach (Spitze)
-        //    { -15.0f,   5.0f,  -30.0f},  // 6: Brückenbasis hinten links
-        //    {  15.0f,   5.0f,  -30.0f},  // 7: Brückenbasis hinten rechts
-        //    {   0.0f,   5.0f,   -5.0f},  // 8: Brückenbasis vorne (Schildkeil)
-        //    {   0.0f,   0.0f,  -50.0f}   // 9: Heckmitte (Triebwerksschott)
-        //};
-		//
-        //// Die Matrix-Schleife: Zerstörer rotieren und im Raum parken
-        //for (int i = 0; i < 10; i++) {
-        //    // Um die Y-Achse rotieren (Drehung auf der Stelle)
-        //    float nx = ship[i].x * cr - ship[i].z * sr;
-        //    float nz = ship[i].x * sr + ship[i].z * cr;
-        //    ship[i].x = nx; 
-        //    ship[i].z = nz;
-        //    
-        //    // Positionierung: Schwebt massiv vor der Sonne bei Z = -190
-        //    ship[i].x += 0.0f; 
-        //    ship[i].y += -15.0f; // Leicht nach unten versetzt für perfekte Sicht
-        //    ship[i].z -= 190.0f; 
-        //}
-		//
-        //// ==========================================
-        //// RASTER PIPELINE: Die Panzerplatten schweißen
-        //// (Sortiert von hinten nach vorne für den Painter's Algorithm!)
-        //// ==========================================
-        //
-        //// 1. Das Heck & Triebwerksschott (Dunkles Schatten-Graugrün)
-        //DrawTriangle3D(ship[1], ship[9], ship[3], 0x0c1a0c, v_cx, v_cy);
-        //DrawTriangle3D(ship[2], ship[4], ship[9], 0x0c1a0c, v_cx, v_cy);
-        //
-        //// 2. Die massive Unterseite (Stark im Schatten)
-        //DrawTriangle3D(ship[0], ship[3], ship[4], 0x142b14, v_cx, v_cy);
-        //
-        //// 3. Die messerscharfen Seitenflanken
-        //DrawTriangle3D(ship[0], ship[1], ship[3], 0x234a23, v_cx, v_cy); // Flanke Links
-        //DrawTriangle3D(ship[0], ship[4], ship[2], 0x2d5e2d, v_cx, v_cy); // Flanke Rechts
-        //
-        //// 4. Das gewaltige Hauptdeck (Mittelgrün - fängt das Sonnenlicht)
-        //DrawTriangle3D(ship[0], ship[2], ship[1], 0x3c7d3c, v_cx, v_cy);
-        //
-        //// 5. Die Brücken-Aufbauten (Hellgrüne Akzente für epische Tiefenwirkung!)
-        //DrawTriangle3D(ship[8], ship[6], ship[7], 0x4b9c4b, v_cx, v_cy); // Turm-Deck
-        //DrawTriangle3D(ship[5], ship[6], ship[8], 0x5cbd5c, v_cx, v_cy); // Brücke Wand Links
-        //DrawTriangle3D(ship[5], ship[8], ship[7], 0x70de70, v_cx, v_cy); // Brücke Wand Rechts (Reflektion)
-        //DrawTriangle3D(ship[5], ship[7], ship[6], 0x2d5e2d, v_cx, v_cy); // Brücke Rückwand
-
         /// ==========================================
         /// LIVE RTC (DATUM UND UHRZEIT) ALS HUD ÜBER ALLEM
         /// ==========================================
@@ -3033,12 +3072,31 @@ extern "C" void main(BootInfo* boot_info) {
                         char* t_name = (char*)((t == 0) ? "COSMOS KERNEL" : "BACKGROUND TASK");
                         
                         /// Ist dieser Task genau in diesem Frame aktiv auf der CPU? -> GRÜN!
-                        _89 c_box = (current_task == t) ? 0x00AA00 : 0x555555; 
+                        _89 c_box = (current_task == t) ? 0x00AA00 : (tasks[t].paused ? 0xAA8800 : 0x555555); 
                         
                         DrawRoundedRect(wx+30, task_y, 290, 20, 3, c_box);
                         Text(wx+40, task_y+4, "TASK", 0xFFFFFF, _128);
                         Text(wx+80, task_y+4, s_id, 0xFFFFFF, _128);
                         Text(wx+110, task_y+4, t_name, 0xFFFFFF, _128);
+                        
+                        _15(t > 0) {
+                            /// Pause Button
+                            DrawRoundedRect(wx+250, task_y+2, 26, 16, 2, tasks[t].paused ? 0x00AA00 : 0x222222);
+                            Text(wx+254, task_y+4, "||", 0xFFFFFF, _86);
+                            _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+250, task_y+2, 26, 16)) {
+                                tasks[t].paused = !tasks[t].paused;
+                                input_cooldown = 20;
+                            }
+                            
+                            /// Kill Button
+                            DrawRoundedRect(wx+280, task_y+2, 26, 16, 2, 0xAA0000);
+                            Text(wx+288, task_y+4, "X", 0xFFFFFF, _86);
+                            _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+280, task_y+2, 26, 16)) {
+                                tasks[t].active = _86;
+                                tasks[t].paused = _86;
+                                input_cooldown = 20;
+                            }
+                        }
                         
                         task_y += 25;
                     }
@@ -3088,7 +3146,6 @@ extern "C" void main(BootInfo* boot_info) {
             /// DISK MANAGER (FENSTER ID 4) - ULTIMATE HDD FIX + LOG VIEW
             /// ==========================================
             _15(win->id EQ 4) {
-
                 /// ONE-SHOT SCANNER: runs exactly once when Disk Manager opens
                 static _44 drives_scanned = _86;
                 _15(!drives_scanned) {
@@ -3096,18 +3153,10 @@ extern "C" void main(BootInfo* boot_info) {
                     drive_count = 0;
                     /// 1. SATA drives
                     ahci_mount_drive();
-                    _39(_43 i = 0; i < detected_port_count; i++) {
-                        _15(drive_count < 8) {
-                            drives[drive_count].type = 2;
-                            drives[drive_count].base_port = detected_ports[i];
-                            str_cpy(drives[drive_count].model, "SATA HARDDISK");
-                            drive_count++;
-                        }
-                    }
                     /// 2. USB drives
                     find_and_init_usb();
                     usb_scan_and_mount();
-                    /// FIX: USB Laufwerke zur drives[] Liste hinzufügen!
+                    /// FIX: USB Laufwerke zur drives[] Liste hinzufAgen!
                     _15(usb_io_base != 0 AND drive_count < 8) {
                         drives[drive_count].type = 3; /// Type 3 = USB
                         drives[drive_count].base_port = (uint32_t)usb_io_base;
@@ -3115,20 +3164,26 @@ extern "C" void main(BootInfo* boot_info) {
                         str_cpy(drives[drive_count].model, "USB STICK");
                         drive_count++;
                     }
+                    ahci_read_mbr(); /// Erkenne Dateisysteme (FAT32, NTFS, exFAT)
                 }
 
                 _44 is_active = (win_z[12] EQ win->id);
-                txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
+txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                 uint32_t buf_mbr = 0x00900000;
                 uint32_t buf_dir = 0x00901000;
 				static _44 is_ntfs_drive = _86;
+				static _44 is_fat32_drive = _86;
                 static _44 need_ui_refresh = _86;
                 static int current_page_offset = 0;
-				static uint32_t active_ntfs_folder_lba = 5; /// NEU: Speichert den Ordner sicher ab!
+				static uint32_t active_ntfs_folder_lba = 5; 
+				static uint32_t active_fat32_folder_lba = 0;
+				static uint32_t fat32_data_start = 0;
+				static uint32_t fat32_sectors_per_cluster = 0;
+                static uint32_t fat32_root_lba = 0;
 				/// BARE METAL FIX: DAS RAM CLIPBOARD (ZWISCHENABLAGE)
                 static _44 clipboard_active = _86;
                 static char clipboard_name[12] = {0};
-				static _44 clipboard_is_folder = _86; /// NEU! Merkt sich, ob es ein Ordner ist
+				static _44 clipboard_is_folder = _86; 
                 
                 /// ------------------------------------------
                 /// VIEW 2: GEÖFFNETES LAUFWERK (DATEI-EXPLORER)
@@ -3169,18 +3224,8 @@ extern "C" void main(BootInfo* boot_info) {
                                     ahci_write_sectors(1002, (uint64_t)buf_dir);
                                     _39(_192 _43 wait2 = 0; wait2 < 1000000; wait2++) __asm__ _192("nop");
                                     
-                                    // ==========================================
-                                    // BARE METAL FIX: FLUMMI AUF DIE FESTPLATTE BRENNEN!
-                                    // ==========================================
-                                    uint8_t* app_ram = (uint8_t*)0x09000000;
-                                    for(int b=0; b<5120; b++) app_ram[b] = 0;
-                                    for(int b=0; b<sizeof(app_bin); b++) app_ram[b] = app_bin[b];
-                                    
-                                    // 10 Sektoren (5120 Bytes) auf Sektor 10000 schreiben
-                                    for(int s=0; s<10; s++) {
-                                        ahci_write_sectors(10000 + s, (uint64_t)(app_ram + (s * 512)));
-                                        _39(_192 _43 wait3 = 0; wait3 < 100000; wait3++) __asm__ _192("nop");
-                                    }
+                                    // Wir überschreiben die Sektoren NICHT mehr mit dem alten Hex-Array!
+                                    // app.bin wurde bereits vom build.sh an Sektor 10000 geschrieben.
                                     
                                     cfs_files[i].exists = 1;
                                     _37;
@@ -3256,10 +3301,13 @@ extern "C" void main(BootInfo* boot_info) {
                         Text(wx+15, wy+120, "TARGET:", 0xAAAAAA, _128);
                         Text(wx+80, wy+120, cfs_files[current_folder_id].name, 0x00FF00, _128);
                         
+                        _15(is_ntfs_drive || is_fat32_drive) {
                         /// [ BACK ] Button
                         DrawRoundedRect(wx+15, wy+140, 60, 20, 2, 0x444444); Text(wx+20, wy+145, "[ BACK ]", 0xFFFFFF, _128);
                         _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+15, wy+140, 60, 20)) {
                             current_folder_id = 255; current_page_offset = 0; need_ui_refresh = _128; input_cooldown = 15; active_ntfs_folder_lba = 5;
+                            if (is_fat32_drive) active_fat32_folder_lba = fat32_root_lba;
+                        }
                         }
                         
                         /// [ PREV ] Button
@@ -3343,6 +3391,72 @@ extern "C" void main(BootInfo* boot_info) {
                         need_ui_refresh = _86; 
                     }
 
+                    _15(is_fat32_drive AND need_ui_refresh) {
+                        _39(int f=0; f<28; f++) { cfs_files[f].exists = 0; cfs_files[f].name[0] = 0; }
+                        int file_idx = 0; int skipped = 0;
+                        
+                        uint8_t* dir_buf = (uint8_t*)buf_dir;
+                        disk_read_auto(active_fat32_folder_lba, (uint64_t)dir_buf);
+                        _39(_192 _43 w = 0; w < 500000; w++) __asm__ _192("nop");
+                        
+                        FAT32_DirectoryEntry* dir = (FAT32_DirectoryEntry*)dir_buf;
+                        
+                        _30 current_lfn[256];
+                        _39(_43 l=0; l<256; l++) current_lfn[l] = 0;
+                        _44 has_lfn = _86;
+                        
+                        _39(_43 i = 0; i < 16; i++) {
+                            if (file_idx >= 8) break;
+                            
+                            _15(dir[i].name[0] EQ 0x00) _37;
+                            _15(dir[i].name[0] EQ 0xE5) { has_lfn = _86; _101; }
+                            
+                            _15(dir[i].attr EQ 0x0F) {
+                                has_lfn = _128;
+                                FAT32_LFN_Entry* lfn = (FAT32_LFN_Entry*)&dir[i];
+                                _43 seq = lfn->sequence_number & 0x1F;
+                                _15(seq EQ 0 OR seq > 20) _101;
+                                _43 offset = (seq - 1) * 13;
+                                current_lfn[offset + 0] = (_30)lfn->name_part_1[0]; current_lfn[offset + 1] = (_30)lfn->name_part_1[1];
+                                current_lfn[offset + 2] = (_30)lfn->name_part_1[2]; current_lfn[offset + 3] = (_30)lfn->name_part_1[3];
+                                current_lfn[offset + 4] = (_30)lfn->name_part_1[4]; current_lfn[offset + 5] = (_30)lfn->name_part_2[0];
+                                current_lfn[offset + 6] = (_30)lfn->name_part_2[1]; current_lfn[offset + 7] = (_30)lfn->name_part_2[2];
+                                current_lfn[offset + 8] = (_30)lfn->name_part_2[3]; current_lfn[offset + 9] = (_30)lfn->name_part_2[4];
+                                current_lfn[offset + 10] = (_30)lfn->name_part_2[5]; current_lfn[offset + 11] = (_30)lfn->name_part_3[0];
+                                current_lfn[offset + 12] = (_30)lfn->name_part_3[1];
+                                _101;
+                            }
+                            
+                            _15(dir[i].attr & 0x08) { has_lfn = _86; _101; }
+                            
+                            if (skipped < current_page_offset) { skipped++; has_lfn=_86; _101; }
+                            
+                            cfs_files[file_idx].exists = 1;
+                            cfs_files[file_idx].parent_idx = current_folder_id;
+                            cfs_files[file_idx].is_folder = (dir[i].attr & 0x10) ? 1 : 0;
+                            cfs_files[file_idx].size = dir[i].size;
+                            uint32_t fcluster = ((uint32_t)dir[i].cluster_high << 16) | dir[i].cluster_low;
+                            cfs_files[file_idx].start_lba = fat32_data_start + ((fcluster - 2) * fat32_sectors_per_cluster);
+                            
+                            _15(has_lfn) {
+                                _39(int n=0; n<11; n++) { 
+                                    char c = current_lfn[n];
+                                    cfs_files[file_idx].name[n] = (c >= 32 && c <= 126) ? c : 0;
+                                }
+                                cfs_files[file_idx].name[11] = 0;
+                            } _41 {
+                                _39(int n=0; n<11; n++) {
+                                    char c = dir[i].name[n];
+                                    cfs_files[file_idx].name[n] = (c >= 32 && c <= 126) ? c : 0;
+                                }
+                                cfs_files[file_idx].name[11] = 0;
+                            }
+                            has_lfn = _86;
+                            file_idx++;
+                        }
+                        need_ui_refresh = _86;
+                    }
+
                     /// ==========================================
                     /// DATEI-LISTE RENDERN & KLICK-ROUTER
                     /// ==========================================
@@ -3371,12 +3485,18 @@ extern "C" void main(BootInfo* boot_info) {
                                 _15(cfs_files[i].is_folder) {
                                     print_win(win, "\n[SYS] ENTERING FOLDER...\n");
                                     active_ntfs_folder_lba = cfs_files[i].start_lba; 
+                                    active_fat32_folder_lba = cfs_files[i].start_lba;
                                     current_folder_id = i;
                                     current_page_offset = 0; 
                                     need_ui_refresh = _128;
                                 } _41 {
                                     _44 is_bin = _86;
-                                    _39(int c=0; c<11; c++) { if(cfs_files[i].name[c] == 'B' && cfs_files[i].name[c+1] == 'I' && cfs_files[i].name[c+2] == 'N') is_bin = _128; }
+                                    _44 is_wav = _86;
+                                    _39(int c=0; c<11; c++) { 
+                                        if(cfs_files[i].name[c] == 'B' && cfs_files[i].name[c+1] == 'I' && cfs_files[i].name[c+2] == 'N') is_bin = _128; 
+                                        if((cfs_files[i].name[c] == 'W' && cfs_files[i].name[c+1] == 'A' && cfs_files[i].name[c+2] == 'V') ||
+                                           (cfs_files[i].name[c] == 'w' && cfs_files[i].name[c+1] == 'a' && cfs_files[i].name[c+2] == 'v')) is_wav = _128;
+                                    }
                                     _15(selected_drive_idx != 99) {
 										active_sata_port = detected_ports[selected_drive_idx];
 										ahci_read_sectors(1002, (uint32_t)buf_dir);
@@ -3393,6 +3513,33 @@ extern "C" void main(BootInfo* boot_info) {
                                             print_win(win, "[ERR] LOAD FAILED!\nGRUND: "); 
                                             print_win(win, cmd_status); 
                                             print_win(win, "\n");
+                                        }
+                                    } _41 _15(is_wav) {
+                                        print_win(win, "\n[SYS] PLAYING WAV AUDIO...\n");
+                                        uint32_t wav_ram_addr = 0x0B500000; /// 181 MB mark, safe
+                                        uint32_t total_sectors = (cfs_files[i].size / 512) + 1;
+                                        _39(uint32_t sec = 0; sec < total_sectors; sec++) {
+                                            disk_read_auto(cfs_files[i].start_lba + sec, wav_ram_addr + (sec * 512));
+                                            _39(_192 _43 wait = 0; wait < 2000; wait++) __asm__ _192("nop");
+                                        }
+                                        uint8_t* wav = (uint8_t*)wav_ram_addr;
+                                        if (wav[0] == 'R' && wav[1] == 'I' && wav[2] == 'F' && wav[3] == 'F') {
+                                            uint16_t channels = *(uint16_t*)&wav[22];
+                                            uint32_t sample_rate = *(uint32_t*)&wav[24];
+                                            uint16_t bits = *(uint16_t*)&wav[34];
+                                            uint32_t data_size = 0;
+                                            uint32_t data_offset = 12;
+                                            while (data_offset < 100) {
+                                                if (wav[data_offset] == 'd' && wav[data_offset+1] == 'a' && wav[data_offset+2] == 't' && wav[data_offset+3] == 'a') {
+                                                    data_size = *(uint32_t*)&wav[data_offset+4];
+                                                    data_offset += 8;
+                                                    break;
+                                                }
+                                                data_offset++;
+                                            }
+                                            if (data_size > 0) {
+                                                play_hda_wav(wav_ram_addr + data_offset, data_size, sample_rate, channels, bits);
+                                            }
                                         }
                                     } _41 {
                                         print_win(win, "\n[SYS] OPENING IN NOTEPAD...\n");
@@ -3456,6 +3603,14 @@ extern "C" void main(BootInfo* boot_info) {
 					// 2. ZEICHNEN (Läuft jeden Frame - KEIN if(!dsk_mgr_opened) hier!)
 					_43 list_y = wy + 60;
 					Text(wx+15, list_y - 15, "AVAILABLE DRIVES:", 0xAAAAAA, _128);
+					
+                    /// REF Button
+                    DrawRoundedRect(wx+140, list_y - 18, 35, 16, 2, 0x444444);
+                    Text(wx+146, list_y - 15, "REF", 0xFFFFFF, _128);
+                    _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+140, list_y - 18, 35, 16)) {
+                        drives_scanned = _86; /// triggers a full rescan next frame
+                        input_cooldown = 15;
+                    }
 				
 					_39(_43 i=0; i < drive_count; i++) {
 						_44 is_sel = (selected_drive_idx == i);
@@ -3564,12 +3719,13 @@ extern "C" void main(BootInfo* boot_info) {
                         _41 _15(boot[0] == 0x50 && boot[1] == 0x4B && boot[2] == 0x03 && boot[3] == 0x04) {
                             print_win(win, "\n[OK] ANDROID APK DETECTED.\n");
                         }
-                        /// FALL 3: NTFS CACHE EINLESEN
+                        /// FALL 3: NTFS ODER FAT32 CACHE EINLESEN
                         _41 {
                             uint8_t part_type = boot[446 + 4];
                             _39(int i=0; i<28; i++) cfs_files[i].exists = 0;
                             
                             _43 target_ntfs_lba = 0; 
+                            _43 target_fat32_lba = 0;
                             
                             _15(boot[510] == 0x55 && boot[511] == 0xAA) {
                                 _15(part_type == 0xEE) {
@@ -3586,16 +3742,20 @@ extern "C" void main(BootInfo* boot_info) {
                                             disk_read_auto(slba, (uint64_t)buf_mbr); /// UNIVERSAL READ!
                                             _39(_192 _43 w3 = 0; w3 < 200000; w3++) __asm__ _192("nop"); 
                                             if (((uint8_t*)buf_mbr)[3]=='N' && ((uint8_t*)buf_mbr)[4]=='T') { target_ntfs_lba = slba; _37; }
+                                            if (((uint8_t*)buf_mbr)[82]=='F' && ((uint8_t*)buf_mbr)[83]=='A' && ((uint8_t*)buf_mbr)[84]=='T') { target_fat32_lba = slba; _37; }
                                         }
                                     }
                                 } _41 _15(part_type == 0x07 || (boot[3]=='N' && boot[4]=='T')) {
                                     target_ntfs_lba = *(_43*)&boot[446 + 8];
+                                } _41 _15(part_type == 0x0B || part_type == 0x0C || (boot[82]=='F' && boot[83]=='A' && boot[84]=='T')) {
+                                    target_fat32_lba = (boot[82]=='F') ? 0 : *(_43*)&boot[446 + 8];
                                 }
                             }
                             
                             _15(target_ntfs_lba > 0) {
                                 print_win(win, "\n[OK] NTFS VOLUME FOUND!\n");
                                 is_ntfs_drive = _128;
+                                is_fat32_drive = _86;
                                 
                                 disk_read_auto(target_ntfs_lba, (uint64_t)buf_dir); /// UNIVERSAL READ!
                                 _39(_192 _43 w = 0; w < 500000; w++) __asm__ _192("nop"); 
@@ -3619,7 +3779,25 @@ extern "C" void main(BootInfo* boot_info) {
                                 }
                                 print_win(win, "[OK] CACHE READY! RAM SPEED UNLOCKED.\n");
                                 need_ui_refresh = _128; 
-                            } _41 { print_win(win, "\n[ERR] NO VALID NTFS MFT FOUND.\n"); }
+                            } _41 _15(target_fat32_lba > 0 || (boot[82]=='F' && boot[83]=='A' && boot[84]=='T')) {
+                                print_win(win, "\n[OK] FAT32 VOLUME FOUND!\n");
+                                is_fat32_drive = _128;
+                                is_ntfs_drive = _86;
+                                
+                                disk_read_auto(target_fat32_lba, (uint64_t)buf_dir);
+                                _39(_192 _43 w = 0; w < 500000; w++) __asm__ _192("nop");
+                                
+                                FAT32_BPB* bpb = (FAT32_BPB*)buf_dir;
+                                fat32_sectors_per_cluster = bpb->sectors_per_cluster;
+                                uint32_t fat_start = bpb->hidden_sectors + bpb->reserved_sectors;
+                                fat32_data_start = fat_start + (bpb->fat_count * bpb->sectors_per_fat_32);
+                                active_fat32_folder_lba = fat32_data_start + ((bpb->root_cluster - 2) * bpb->sectors_per_cluster);
+                                /// Start is offset by target_fat32_lba (the partition start)
+                                fat32_data_start += target_fat32_lba;
+                                active_fat32_folder_lba += target_fat32_lba;
+                                
+                                need_ui_refresh = _128;
+                            } _41 { print_win(win, "\n[ERR] NO VALID NTFS/FAT32 FOUND.\n"); }
                         }
                         
                         current_folder_id = 255; 
@@ -3881,6 +4059,18 @@ extern "C" void main(BootInfo* boot_info) {
 			}
 		}
         DrawAeroCursor(mouse_x, mouse_y);
+        
+        // BARE METAL FIX: Fullscreen Overlay Buffer zeichnen
+        if (app_window_active) {
+            uint32_t* overlay = (uint32_t*)app_overlay_buffer;
+            for (int i = 0; i < 800 * 600; i++) {
+                if (overlay[i] != 0) {
+                    bb[i] = overlay[i];
+                    overlay[i] = 0; // Sofort leeren für den nächsten Frame!
+                }
+            }
+        }
+        
         Swap(); 
         frame++;
     }

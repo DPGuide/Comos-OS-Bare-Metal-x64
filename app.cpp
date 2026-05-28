@@ -4,42 +4,72 @@ extern "C" __attribute__((section(".text.entry"))) void app_main() {
     // 1. DIE MAGISCHE SIGNATUR
     __asm__ volatile("nop; nop; nop; nop;");
     
-    // 2. RAM-FENSTER VOM KERNEL ANFORDERN (Syscall 4)
-    // Die Adresse eures 50x50 Puffers landet in "window_buffer"
+    // 2. RAM-FENSTER VOM KERNEL ANFORDERN (Syscall 5 = Fullscreen Overlay)
+    // Die Adresse eures 800x600 Puffers landet in "window_buffer"
     volatile uint32_t* window_buffer;
-    __asm__ volatile("mov $4, %%rax \n int $0x80" : "=a"(window_buffer) : : "memory");
+    __asm__ volatile("mov $5, %%rax \n int $0x80" : "=a"(window_buffer) : : "memory");
     
-    // 3. FLUMMI VARIABLEN
-    long long x = 10;
-    long long y = 10;
-    long long dx = 1;
-    long long dy = 1;
-    long long color = 0x00FF00; /// Hacker-Grün!
+    // 3. FLUMMI VARIABLEN (Laser Punkt)
+    long long x = 400;
+    long long y = 300;
+    long long dx = 2;
+    long long dy = 2;
+    uint32_t color = 0xFF0000; /// Laser-Rot!
+    
+    // Beethoven's 5th Symphony Notes (Frequencies)
+    // G4, G4, G4, Eb4, F4, F4, F4, D4
+    uint64_t notes[] = { 392, 392, 392, 311, 0, 349, 349, 349, 293, 0 };
+    // Durations in "ticks"
+    uint64_t durations[] = { 10, 10, 10, 40, 20, 10, 10, 10, 40, 20 };
+    
+    int current_note = 0;
+    int note_timer = 0;
+    
+    // Start first note
+    if (notes[0] != 0) {
+        __asm__ volatile("mov $7, %%rax \n mov %0, %%rdi \n int $0x80" : : "r"(notes[0]) : "rax", "rdi", "memory");
+    }
     
     while(1) {
-        // Alten Flummi löschen (0 = Transparent für den Kernel!)
-        window_buffer[y * 50 + x] = 0;
-        window_buffer[y * 50 + (x+1)] = 0;
-        window_buffer[(y+1) * 50 + x] = 0;
-        window_buffer[(y+1) * 50 + (x+1)] = 0;
         
         x += dx;
         y += dy;
         
-        // Wand-Kollision (Der Puffer ist 50x50 Pixel groß!)
-        if (x <= 1) dx = 1;
-        if (x >= 48) dx = -1;
-        if (y <= 1) dy = 1;
-        if (y >= 48) dy = -1;
+        // Wand-Kollision (Der Puffer ist 800x600 Pixel groß!)
+        if (x <= 5) dx = 2;
+        if (x >= 795) dx = -2;
+        if (y <= 5) dy = 2;
+        if (y >= 595) dy = -2;
         
-        // Neuen Flummi in den Puffer zeichnen
-        window_buffer[y * 50 + x] = color;
-        window_buffer[y * 50 + (x+1)] = color;
-        window_buffer[(y+1) * 50 + x] = color;
-        window_buffer[(y+1) * 50 + (x+1)] = color;
+        // Neuen Flummi (Laserpunkt) in den Puffer zeichnen
+        // Ein kleiner 4x4 Punkt
+        for (int py = 0; py < 4; py++) {
+            for (int px = 0; px < 4; px++) {
+                window_buffer[(y + py) * 800 + (x + px)] = color;
+            }
+        }
         
-        // Kurze Bremse
-        for(volatile int i = 0; i < 500000; i++) {}
+        // Musik-Logik:
+        note_timer++;
+        if (note_timer > durations[current_note] * 5) { // Skaliert für die Loop-Geschwindigkeit
+            note_timer = 0;
+            current_note++;
+            if (current_note >= 10) {
+                current_note = 0; // Endlosschleife
+            }
+            
+            // Note spielen
+            if (notes[current_note] == 0) {
+                // Pause
+                __asm__ volatile("mov $7, %%rax \n mov $0, %%rdi \n int $0x80" : : : "rax", "rdi", "memory");
+            } else {
+                // Ton
+                __asm__ volatile("mov $7, %%rax \n mov %0, %%rdi \n int $0x80" : : "r"(notes[current_note]) : "rax", "rdi", "memory");
+            }
+        }
+        
+        // Kurze Bremse (Flummi Speed)
+        for(volatile int i = 0; i < 200000; i++) {}
         
         // Yield (Syscall 0)
         __asm__ volatile("mov $0, %%rax \n int $0x80" : : : "rax", "memory");

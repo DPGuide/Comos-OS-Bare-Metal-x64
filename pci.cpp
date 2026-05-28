@@ -830,14 +830,14 @@ void system_init_usb() {
                 uint32_t id = pci_read(b,d,f,0);
                 if ((id & 0xFFFF) != 0xFFFF) {
                     uint32_t cls = pci_read(b,d,f,0x08);
-                    if ((cls >> 8) == 0x0C0330) { bus = b; dev = d; func = f; found = true; }
+                    if (((cls >> 16) & 0xFFFF) == 0x0C03) { bus = b; dev = d; func = f; found = true; }
                 }
             }
         }
     }
 
     if(!found) { 
-        str_cpy(hw_usb, "xHCI NOT FOUND"); 
+        str_cpy(hw_usb, "USB HOST NOT FOUND"); 
     } else {
         str_cpy(hw_usb, "BIOS LEGACY USB ACTIVE"); 
     }

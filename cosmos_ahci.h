@@ -20,7 +20,7 @@ _81 _202 {
     _89 cap;        _89 ghc;        _89 is;         _89 pi;
     _89 vs;         _89 ccc_ctl;    _89 ccc_pts;    _89 em_loc;
     _89 em_ctl;     _89 cap2;       _89 bohc;       _89 reserved[29];
-    _89 vendor[15]; HBA_PORT ports[32];
+    _89 vendor[24]; HBA_PORT ports[32];
 } HBA_MEM;
 
 _81 _202 {
@@ -46,6 +46,64 @@ _81 _202 {
     _184 lba5;       _184 featureh;   _184 countl;     _184 counth;
     _184 icc;        _184 control;    _184 rsv1[4];
 } FIS_REG_H2D;
+
+#pragma pack(push, 1)
+_202 FAT32_BPB {
+    _184 jmp[3];
+    _30  oem_name[8];
+    _182 bytes_per_sector;
+    _184 sectors_per_cluster;
+    _182 reserved_sectors;
+    _184 fat_count;
+    _182 root_dir_entries;
+    _182 total_sectors_16;
+    _184 media_type;
+    _182 sectors_per_fat_16;
+    _182 sectors_per_track;
+    _182 heads;
+    _43  hidden_sectors;
+    _43  total_sectors_32;
+    _43  sectors_per_fat_32;
+    _182 ext_flags;
+    _182 fs_version;
+    _43  root_cluster;
+    _182 fs_info;
+    _182 backup_boot_sector;
+    _184 reserved[12];
+    _184 drive_number;
+    _184 reserved1;
+    _184 boot_signature;
+    _43  volume_id;
+    _30  volume_label[11];
+    _30  fs_type[8];
+} __attribute__((packed));
+
+_202 FAT32_DirectoryEntry {
+    _30  name[11];
+    _184 attr;
+    _184 reserved;
+    _184 create_time_tenths;
+    _182 create_time;
+    _182 create_date;
+    _182 access_date;
+    _182 cluster_high;
+    _182 modify_time;
+    _182 modify_date;
+    _182 cluster_low;
+    _43  size;
+} __attribute__((packed));
+
+_202 FAT32_LFN_Entry {
+    _184 sequence_number;
+    _182 name_part_1[5];
+    _184 attr;
+    _184 reserved_1;
+    _184 checksum;
+    _182 name_part_2[6];
+    _182 reserved_2;
+    _182 name_part_3[2];
+} __attribute__((packed));
+#pragma pack(pop)
 
 // --- 2. DANN ERST DIE FUNKTIONEN ---
 _172 _50 ahci_init();
