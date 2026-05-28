@@ -3155,19 +3155,12 @@ extern "C" void main(BootInfo* boot_info) {
                     drive_count = 0;
                     /// 1. SATA drives
                     ahci_mount_drive();
-                    /// 2. USB drives (Temporarily disabled to fix SATA/NTFS and prevent keyboard freezes)
-                    // find_and_init_usb();
-                    // usb_scan_and_mount();
-                    /// FIX: USB Laufwerke zur drives[] Liste hinzufAgen!
-                    // _15(usb_io_base != 0 AND drive_count < 8) {
-                    //     drives[drive_count].type = 3; /// Type 3 = USB
-                    //     drives[drive_count].base_port = (uint32_t)usb_io_base;
-                    //     drives[drive_count].size_mb = 0;
-                    //     str_cpy(drives[drive_count].model, "USB STICK");
-                    //     drive_count++;
-                    // }
+                    /// 2. USB drives - nur per Button-Klick! (Siehe SCAN USB Button unten)
                     ahci_read_mbr(); /// Erkenne Dateisysteme (FAT32, NTFS, exFAT)
                 }
+                
+                /// BARE METAL FIX: USB Scan Button (manuell, damit BIOS-Emulation nicht crasht)
+                static _44 usb_scanned = _86;
 
                 _44 is_active = (win_z[13] EQ win->id);
 txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
@@ -3312,14 +3305,14 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                         /// [ PREV ] Button
                         DrawRoundedRect(wx+85, wy+140, 45, 20, 2, 0x444444); Text(wx+92, wy+145, "PREV", 0xFFFFFF, _128);
                         _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+85, wy+140, 45, 20)) {
-                            if (current_page_offset >= 8) current_page_offset -= 8;
+                            if (current_page_offset >= 10) current_page_offset -= 10;
                             need_ui_refresh = _128; input_cooldown = 15;
                         }
                         
                         /// [ NEXT ] Button
                         DrawRoundedRect(wx+135, wy+140, 45, 20, 2, 0x444444); Text(wx+142, wy+145, "NEXT", 0xFFFFFF, _128);
                         _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+135, wy+140, 45, 20)) {
-                            current_page_offset += 8;
+                            current_page_offset += 10;
                             need_ui_refresh = _128; input_cooldown = 15;
                         }
 
@@ -3349,7 +3342,7 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                         uint8_t* mft_cache = (uint8_t*)0x0A000000;
                         
                         _39(int rec = 16; rec < 50000; rec++) {
-                            if (file_idx >= 8) break; 
+                            if (file_idx >= 28) break; 
                             
                             uint8_t* mft_rec = mft_cache + (rec * 1024); 
                             
@@ -3416,8 +3409,10 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                     /// DATEI-LISTE RENDERN & KLICK-ROUTER
                     /// ==========================================
                     _43 y_off = wy + 170; 
+                    _43 visible_count = 0; /// BARE METAL FIX: Max 10 Dateien pro Seite!
                     _39(_43 i=0; i<28; i++) {
                         _15(cfs_files[i].exists AND cfs_files[i].parent_idx EQ current_folder_id) {
+                            if (visible_count >= 10) _37; /// Max 10 pro Seite!
                             
                             /// BARE METAL FIX: Hover-Breite von 200 auf 265 erhöht! Jetzt leuchtet auch COPY!
                             _44 is_hov = is_over_rect(mouse_x, mouse_y, wx+15, y_off, 265, 20);
@@ -3550,6 +3545,7 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                                 input_cooldown = 25;
                             }
                             
+                            visible_count++;
                             y_off += 25;
                         }
                     }
@@ -3564,6 +3560,28 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                     Text(wx+146, list_y - 15, "REF", 0xFFFFFF, _128);
                     _15(input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+140, list_y - 18, 35, 16)) {
                         drives_scanned = _86; /// triggers a full rescan next frame
+                        usb_scanned = _86;    /// allow USB rescan too
+                        input_cooldown = 15;
+                    }
+                    
+                    /// SCAN USB Button
+                    _89 usb_btn_col = usb_scanned ? 0x006600 : 0x0066AA;
+                    DrawRoundedRect(wx+180, list_y - 18, 65, 16, 2, usb_btn_col);
+                    Text(wx+185, list_y - 15, usb_scanned ? "USB OK" : "SCAN USB", 0xFFFFFF, _128);
+                    _15(!usb_scanned AND input_cooldown EQ 0 AND mouse_just_pressed AND is_active AND is_over_rect(mouse_x, mouse_y, wx+180, list_y - 18, 65, 16)) {
+                        usb_scanned = _128;
+                        print_win(win, "\n[SYS] SCANNING USB...\n");
+                        find_and_init_usb();
+                        _15(usb_io_base != 0 AND drive_count < 8) {
+                            drives[drive_count].type = 3; /// Type 3 = USB
+                            drives[drive_count].base_port = (uint32_t)usb_io_base;
+                            drives[drive_count].size_mb = 0;
+                            str_cpy(drives[drive_count].model, "USB STICK");
+                            drive_count++;
+                            print_win(win, "[OK] USB DRIVE ADDED!\n");
+                        } _41 {
+                            print_win(win, "[WARN] NO USB DRIVES FOUND.\n");
+                        }
                         input_cooldown = 15;
                     }
 				
@@ -3696,8 +3714,10 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                                         _15(slba > 0) {
                                             disk_read_auto(slba, (uint64_t)buf_mbr); /// UNIVERSAL READ!
                                             _39(_192 _43 w3 = 0; w3 < 200000; w3++) __asm__ _192("nop"); 
+                                            /// NTFS gefunden? Sofort nehmen und aufhören!
                                             if (((uint8_t*)buf_mbr)[3]=='N' && ((uint8_t*)buf_mbr)[4]=='T') { target_ntfs_lba = slba; _37; }
-                                            if (((uint8_t*)buf_mbr)[82]=='F' && ((uint8_t*)buf_mbr)[83]=='A' && ((uint8_t*)buf_mbr)[84]=='T') { target_fat32_lba = slba; _37; }
+                                            /// FAT32 nur merken, aber WEITERSUCHEN nach NTFS!
+                                            if (((uint8_t*)buf_mbr)[82]=='F' && ((uint8_t*)buf_mbr)[83]=='A' && ((uint8_t*)buf_mbr)[84]=='T') { target_fat32_lba = slba; }
                                         }
                                     }
                                 } _41 {
@@ -3727,17 +3747,21 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                                 uint64_t mft_lba = target_ntfs_lba + (mft_cluster * sec_per_cluster);
                                 
                                 uint8_t* mft_cache = (uint8_t*)0x0A000000; 
-                                print_win(win, "[SYS] CACHING 50,000 MFT RECORDS...\n");
+                                print_win(win, "[SYS] CACHING MFT RECORDS (BULK)...\n");
                                 
-                                _39(int rec = 0; rec < 50000; rec++) {
-                                    uint64_t record_lba = mft_lba + (rec * 2);
-                                    uint64_t ram_target = (uint64_t)(mft_cache + (rec * 1024));
-                                    
-                                    disk_read_auto(record_lba, ram_target); /// UNIVERSAL READ!
-                                    _39(_192 _43 w1 = 0; w1 < 2000; w1++) __asm__ _192("nop");
-                                    
-                                    disk_read_auto(record_lba + 1, ram_target + 512); /// UNIVERSAL READ!
-                                    _39(_192 _43 w2 = 0; w2 < 2000; w2++) __asm__ _192("nop");
+                                /// BARE METAL FIX: 50.000 Records = 100.000 Sektoren
+                                /// Statt 100.000 Einzel-Reads machen wir ~782 Bulk-Reads mit je 128 Sektoren!
+                                _43 total_sectors = 50000 * 2; /// 100.000 Sektoren
+                                _43 bulk_size = 128;           /// 128 Sektoren pro Read (= 64 KB pro Read)
+                                _43 port_no = drives[selected_drive_idx].base_port;
+                                
+                                _39(_43 offset = 0; offset < total_sectors; offset += bulk_size) {
+                                    _43 remaining = total_sectors - offset;
+                                    _43 chunk = (remaining < bulk_size) ? remaining : bulk_size;
+                                    uint64_t lba = mft_lba + offset;
+                                    uint64_t ram = (uint64_t)(mft_cache + (offset * 512));
+                                    ahci_read_sectors(port_no, lba, chunk, ram);
+                                    _39(_192 _43 w1 = 0; w1 < 5000; w1++) __asm__ _192("nop");
                                 }
                                 print_win(win, "[OK] CACHE READY! RAM SPEED UNLOCKED.\n");
                                 need_ui_refresh = _128; 
