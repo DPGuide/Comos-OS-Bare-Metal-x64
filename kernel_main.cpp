@@ -3155,17 +3155,17 @@ extern "C" void main(BootInfo* boot_info) {
                     drive_count = 0;
                     /// 1. SATA drives
                     ahci_mount_drive();
-                    /// 2. USB drives
-                    find_and_init_usb();
-                    usb_scan_and_mount();
+                    /// 2. USB drives (Temporarily disabled to fix SATA/NTFS and prevent keyboard freezes)
+                    // find_and_init_usb();
+                    // usb_scan_and_mount();
                     /// FIX: USB Laufwerke zur drives[] Liste hinzufAgen!
-                    _15(usb_io_base != 0 AND drive_count < 8) {
-                        drives[drive_count].type = 3; /// Type 3 = USB
-                        drives[drive_count].base_port = (uint32_t)usb_io_base;
-                        drives[drive_count].size_mb = 0;
-                        str_cpy(drives[drive_count].model, "USB STICK");
-                        drive_count++;
-                    }
+                    // _15(usb_io_base != 0 AND drive_count < 8) {
+                    //     drives[drive_count].type = 3; /// Type 3 = USB
+                    //     drives[drive_count].base_port = (uint32_t)usb_io_base;
+                    //     drives[drive_count].size_mb = 0;
+                    //     str_cpy(drives[drive_count].model, "USB STICK");
+                    //     drive_count++;
+                    // }
                     ahci_read_mbr(); /// Erkenne Dateisysteme (FAT32, NTFS, exFAT)
                 }
 
