@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/875bba43-d745-42f8-8c85-3b098db35e8b
 + + GPT / NFTS [SATA / USB (x) / ( ) ] 
 + + GPT / FAT32 [USB ( ) ] 
 + + GPT / exFAT [USB ( ) ] 
-+ + GPT / exT [SATA / USB ( ) / ( ) ] 
++ + GPT / ExT [SATA / USB ( ) / ( ) ] 
 + more stable / TASK SHEDULER ( [II] Break or [X] Close Task
 + *.bin to run 
 + 2D / 3D Grafic
