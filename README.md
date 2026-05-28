@@ -10,7 +10,7 @@ https://github.com/user-attachments/assets/875bba43-d745-42f8-8c85-3b098db35e8b
 + owen CFS Filesystem (working fine)
 + 2 Retro Games / Ping Pong / Blobbey Volley
 + Editor Text messages
-+ SATA / USB 1.1 / 2.0 / 3.0
++ SATA / USB 1.1 / 2.0 / 3.0 (at work because of GPT / NFTS , ExT... , FAT32 , exFAT ,APK [ZIP])
 + more stable / TASK SHEDULER
 + *.bin to run 
 + 3D Grafic
