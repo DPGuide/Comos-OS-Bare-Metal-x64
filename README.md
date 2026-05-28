@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/875bba43-d745-42f8-8c85-3b098db35e8b
 + SATA / USB 1.1 / 2.0 / 3.0 (at work because of GPT / NFTS , ExT... , FAT32 , exFAT ,APK [ZIP])
 + more stable / TASK SHEDULER ( [II] Break or [X] Close Task
 + *.bin to run 
-+ 3D Grafic
++ 2D / 3D Grafic
 + Sound 3.5 mm audio jack (older systems for now, its just up to youre mainboard)
  ******
   ***kernel.cpp is OS1 x32 - kernel_main.cpp is OS2 x64***
