@@ -408,37 +408,43 @@ static inline void outw(uint16_t port, uint16_t val) { __asm__ volatile ( "outw 
 /// ==========================================
 /// BARE METAL FIX: SMART xHCI (USB 3.0) SCANNER
 /// ==========================================
-extern int init_xhci_probe(uint32_t bar0, int id); 
+extern int init_xhci_probe(uint64_t base_addr, int id); 
 
 void find_and_init_usb() {
     extern char cmd_status[256]; 
     extern void str_cpy(char* d, const char* s);
     usb_io_base = 0; // Reset
 
-    _39(uint32_t bus = 0; bus < 256; bus++) { 
-        _39(uint32_t slot = 0; slot < 32; slot++) {
-            _39(uint32_t func = 0; func < 8; func++) {
+    for(int bus = 0; bus < 256; bus++) { 
+        for(int slot = 0; slot < 32; slot++) {
+            for(int func = 0; func < 8; func++) {
                 uint32_t vendor_device = pci_read(bus, slot, func, 0);
                 
-                _15((vendor_device & 0xFFFF) != 0xFFFF) {
+                if ((vendor_device & 0xFFFF) != 0xFFFF) {
                     uint32_t class_info = pci_read(bus, slot, func, 0x08);
                     uint8_t class_code = (class_info >> 24) & 0xFF;
                     uint8_t subclass   = (class_info >> 16) & 0xFF;
                     uint8_t prog_if    = (class_info >>  8) & 0xFF;
                     
-                    _15(class_code == 0x0C && subclass == 0x03) {
+                    if (class_code == 0x0C && subclass == 0x03) {
                         
                         /// xHCI (USB 3.0) - MMIO, handled separately by init_xhci_probe
-                        _15(prog_if == 0x30) {
+                        if (prog_if == 0x30) {
                             uint32_t bar0 = pci_read(bus, slot, func, 0x10);
-                            uint32_t mmio_base = bar0 & 0xFFFFFFF0;
-                            /// Do NOT set usb_io_base here - xHCI uses MMIO, not port I/O
+                            uint32_t clean_bar0 = bar0 & 0xFFFFFFF0;
+                            uint32_t bar1 = pci_read(bus, slot, func, 0x14);
+                            
+                            uint64_t full_bar = clean_bar0;
+                            if ((bar0 & 0x04) != 0) {
+                                full_bar = ((uint64_t)bar1 << 32) | clean_bar0;
+                            }
+                            
                             str_cpy(cmd_status, "xHCI (USB 3.0) FOUND!");
-                            init_xhci_probe(mmio_base, 1);
+                            init_xhci_probe(full_bar, 1);
                             /// Keep scanning for UHCI too
                         }
                         /// UHCI (USB 1.1) - Port I/O via BAR4
-                        _41 _15(prog_if == 0x00) {
+                        else if (prog_if == 0x00) {
                             /// Enable Bus Mastering + I/O space
                             uint32_t pci_cmd_addr = 0x80000000 | (bus << 16) | (slot << 11) | (func << 8) | 0x04;
                             outl(0xCF8, pci_cmd_addr);
@@ -1674,7 +1680,11 @@ bool load_and_run_bin(uint32_t start_lba, uint32_t sector_count) {
     // ==========================================
     // SIGNATUR PRÜFEN
     // ==========================================
-    if (ram[0] == 0xF3 && ram[1] == 0x0F && ram[2] == 0x1E && ram[3] == 0xFA) {
+    bool valid = false;
+    if (ram[0] == 0xF3 && ram[1] == 0x0F && ram[2] == 0x1E && ram[3] == 0xFA) valid = true; // endbr64
+    if (ram[0] == 0x90 && ram[1] == 0x90 && ram[2] == 0x90 && ram[3] == 0x90) valid = true; // 4 NOPs
+
+    if (valid) {
         
         create_task((void (*)()) target_ram); 
         is_app_running = true; 

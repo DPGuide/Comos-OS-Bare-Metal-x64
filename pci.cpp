@@ -73,7 +73,7 @@ void init_idt() {}
 /// --- XHCI DMA POSTAMT (HARDCODED RAM) ---
 /// Wir reservieren uns einfach die 10-Megabyte-Marke im Arbeitsspeicher!
 /// 0x00A00000 ist exakt durch 64 teilbar (perfekt aligned) und hier stören wir niemanden.
-extern int init_xhci_probe(uint32_t bar0, int id);
+extern int init_xhci_probe(uint64_t base_addr, int id);
 /// BARE METAL FIX: DCBAA und Command Ring (128 MB Marke)
 uint64_t* xhci_dcbaa = (uint64_t*)0x08100000; 
 uint64_t* xhci_cmd_ring = (uint64_t*)0x08010000;
@@ -96,7 +96,7 @@ struct XHCI_TRB {
 };
 
 /// Das xHCI Kommunikations-Zentrum
-uint64_t xhci_db_base = 0;   /// <--- WICHTIG: Das hier muss xhci_db_base heißen!
+uintptr_t xhci_db_base = 0;   /// <--- WICHTIG: Das hier muss xhci_db_base heißen!
 uint32_t xhci_cmd_idx = 0;   /// Aktuelle Zeile im Postausgang
 uint32_t xhci_cmd_cycle = 1; /// Das magische Toggle-Bit
 _202 OracleEntry {
@@ -115,14 +115,14 @@ _202 OracleEntry {
 #endif
 _172 OracleEntry oracle_db[16];
 _172 _43 oracle_entry_count;
-_172 _50 mmio_write32(_89 addr, _89 val);
+_172 _50 mmio_write32(uintptr_t addr, _89 val);
 _172 _30 hw_storage_list[4][48];
 _172 _43 storage_count;
 _172 _43 current_storage_idx;
 _172 _30 hw_gpu_list[2][48];
 _172 _43 gpu_count;
 _172 _43 current_gpu_idx;
-_172 _89 mmio_read32(_89 addr);
+_172 _89 mmio_read32(uintptr_t addr);
 _172 _50 int_to_str(_43 val, _30* str);
 _172 _30 hw_storage[48];
 _172 NICInfo found_nics[5];
@@ -355,14 +355,14 @@ _50 xhci_bios_handoff(_89 cap_base) {
         ext_cap_ptr = ext_cap_ptr + (next_ptr << 2);
     }
 }
-_50 xhci_reset(_89 op_base) {
+_50 xhci_reset(uintptr_t op_base) {
     /// 1. Den aktuellen Befehls-Status (USBCMD) auslesen
     _89 cmd = mmio_read32(op_base);
     /// 2. Controller ANHALTEN (Bit 0 - Run/Stop auf 0 setzen)
     cmd = cmd & 0xFFFFFFFE;
     mmio_write32(op_base, cmd);
     /// 3. Warten, bis der Controller den Stopp bestätigt (USBSTS Bit 0 = HCHalted)
-    _89 status_reg = op_base + 0x04;
+    uint64_t status_reg = op_base + 0x04;
     _39(_43 wait = 0; wait < 100000; wait++) {
         _15(mmio_read32(status_reg) & 0x01) _37; 
     }
@@ -374,9 +374,56 @@ _50 xhci_reset(_89 op_base) {
     }
 }
 
-_50 xhci_power_on_ports(_89 op_base, _43 max_ports) {
+extern _50 debug_print(const char* msg);
+_50 hex_to_str_32(_89 val, _30* str) {
+    const char hex_chars[] = "0123456789ABCDEF";
+    str[0] = '0'; str[1] = 'x';
+    for (int i = 7; i >= 0; i--) {
+        str[i + 2] = hex_chars[val & 0xF];
+        val >>= 4;
+    }
+    str[10] = 0;
+}
+
+extern uint64_t global_xhci_base_addr;
+
+extern "C" _50 xhci_init_controller(uintptr_t op_base) {
+    xhci_db_base = op_base - *((volatile uint8_t*)(global_xhci_base_addr)) + *((volatile uint32_t*)(global_xhci_base_addr + 0x14));
+    
+    xhci_reset(op_base);
+    
+    /// 1. DCBAAP setzen
+    mmio_write32(op_base + 0x30, (uint32_t)((uint64_t)xhci_dcbaa & 0xFFFFFFFF));
+    mmio_write32(op_base + 0x34, (uint32_t)(((uint64_t)xhci_dcbaa >> 32) & 0xFFFFFFFF));
+    
+    /// 2. Command Ring setzen (CRCR)
+    mmio_write32(op_base + 0x18, (uint32_t)((uint64_t)xhci_cmd_ring & 0xFFFFFFFF) | 1);
+    mmio_write32(op_base + 0x1C, (uint32_t)(((uint64_t)xhci_cmd_ring >> 32) & 0xFFFFFFFF));
+    
+    /// 3. Event Ring Segment Table setzen
+    uint64_t* erst = (uint64_t*)xhci_erst;
+    erst[0] = (uint32_t)((uint64_t)xhci_ev_ring & 0xFFFFFFFF);
+    erst[1] = (uint32_t)(((uint64_t)xhci_ev_ring >> 32) & 0xFFFFFFFF);
+    erst[2] = 256; /// Size
+    erst[3] = 0;
+    
+    uint64_t rts_base = op_base + 0x20;
+    mmio_write32(rts_base + 0x28, 1); /// ERSTSZ = 1 Segment
+    mmio_write32(rts_base + 0x30, (uint32_t)((uint64_t)xhci_erst & 0xFFFFFFFF)); /// ERSTBA
+    mmio_write32(rts_base + 0x34, (uint32_t)(((uint64_t)xhci_erst >> 32) & 0xFFFFFFFF));
+    
+    mmio_write32(rts_base + 0x38, (uint32_t)((uint64_t)xhci_ev_ring & 0xFFFFFFFF)); /// ERDP
+    mmio_write32(rts_base + 0x3C, (uint32_t)(((uint64_t)xhci_ev_ring >> 32) & 0xFFFFFFFF));
+    
+    /// 4. Controller starten (Run)
+    _89 cmd = mmio_read32(op_base);
+    mmio_write32(op_base, cmd | 1);
+}
+
+_50 xhci_power_on_ports(uintptr_t op_base, _43 max_ports) {
+    debug_print("XHCI: Powering on ports...");
     _39(_43 i = 1; i <= max_ports; i++) {
-        _89 portsc_addr = op_base + 0x400 + ((i - 1) * 0x10);
+        uint64_t portsc_addr = op_base + 0x400 + ((i - 1) * 0x10);
         _89 portsc = mmio_read32(portsc_addr);
         /// 1. DIE FALLE ENTSCHÄRFEN
         /// Bits 17-23 (0x00FE0000) sind Write-1-to-clear.
@@ -412,17 +459,28 @@ _50 pci_write(_184 bus, _184 slot, _184 func, _184 offset, _89 value) {
 inline unsigned char mmio_read8(_89 address) {
     return *((volatile unsigned char*)address);
 }
-_184 xhci_check_ports(_89 op_base, _43 max_ports) {
+
+extern _50 debug_print(const char* msg);
+
+_184 xhci_check_ports(uintptr_t op_base, _43 max_ports) {
+    debug_print("XHCI: Waiting 20M cycles for boot...");
     /// 1. DIE GEDENKSEKUNDE: Wir warten, bis der Stick gebootet hat
     _39(_43 wait = 0; wait < 20000000; wait++) { asm volatile("nop"); }
 
     _44 found = _86;
     _39(_43 i = 1; i <= max_ports; i++) {
-        _89 portsc_addr = op_base + 0x400 + ((i - 1) * 0x10);
+        uint64_t portsc_addr = op_base + 0x400 + ((i - 1) * 0x10);
         _89 portsc = mmio_read32(portsc_addr);
+
+        _30 dbg[64];
+        str_cpy(dbg, "XHCI Port "); int_to_str(i, dbg+10);
+        _43 dl=0; _114(dbg[dl]) dl++;
+        str_cpy(dbg+dl, " PORTSC="); hex_to_str_32(portsc, dbg+dl+8);
+        debug_print(dbg);
 
         /// Bit 0 ist der "Current Connect Status"
         _15(portsc & 0x01) {
+            debug_print("XHCI: Device connected!");
             /// Wir lesen die Geschwindigkeit des Sticks (Bits 10-13)
             _89 port_speed = (portsc >> 10) & 0x0F;
             
@@ -455,7 +513,7 @@ _184 xhci_send_enable_slot() {
     ring[xhci_cmd_idx].control = (9 << 10) | xhci_cmd_cycle;
     xhci_cmd_idx++;
     mmio_write32(xhci_db_base, 0); /// Klingeln!
-    volatile uint32_t* event_ring = (volatile uint32_t*)0x04030000;
+    volatile uint32_t* event_ring = (volatile uint32_t*)xhci_ev_ring;
     _39(_43 wait = 0; wait < 1000000; wait++) {
         /// Wir lesen genau den Slot, auf den unser Radar (xhci_ev_idx) zeigt!
         _89 ctrl = event_ring[(xhci_ev_idx * 4) + 3];
@@ -498,7 +556,7 @@ _50 xhci_send_address_device(_184 slot_id, _184 port_id, _89 speed) {
     in_ctx[16 + 4] = 8; /// Average TRB Length
 
     /// 3. Befehl (Typ 11) abfeuern!
-    volatile XHCI_TRB* ring = (volatile XHCI_TRB*)0x04010000;
+    volatile XHCI_TRB* ring = (volatile XHCI_TRB*)xhci_cmd_ring;
     
     /// 64-Bit Fix
     ring[xhci_cmd_idx].param1 = (uint32_t)((uint64_t)in_ctx & 0xFFFFFFFF);
@@ -509,7 +567,7 @@ _50 xhci_send_address_device(_184 slot_id, _184 port_id, _89 speed) {
     mmio_write32(xhci_db_base, 0);
 
     /// 4. Auf die Taufe warten
-    volatile uint32_t* event_ring = (volatile uint32_t*)0x04030000;
+    volatile uint32_t* event_ring = (volatile uint32_t*)xhci_ev_ring;
     _39(_43 wait = 0; wait < 1000000; wait++) {
         _89 ctrl = event_ring[(xhci_ev_idx * 4) + 3];
         _15((ctrl & 1) EQ xhci_ev_cycle) { 
@@ -597,7 +655,7 @@ _50 xhci_configure_endpoints(_184 slot_id, _89 speed) {
         ep_in_ring[63 * 4 + 3] = (6 << 10) | 2;
     }
 
-    volatile XHCI_TRB* ring = (volatile XHCI_TRB*)0x04010000;
+    volatile XHCI_TRB* ring = (volatile XHCI_TRB*)xhci_cmd_ring;
     /// 64-Bit Fix
     ring[xhci_cmd_idx].param1 = (_89)(uint64_t)in_ctx;
     ring[xhci_cmd_idx].param2 = 0;
@@ -606,7 +664,7 @@ _50 xhci_configure_endpoints(_184 slot_id, _89 speed) {
     xhci_cmd_idx++;
     mmio_write32(xhci_db_base, 0); 
 
-    volatile uint32_t* event_ring = (volatile uint32_t*)0x04030000;
+    volatile uint32_t* event_ring = (volatile uint32_t*)xhci_ev_ring;
     _39(_43 wait = 0; wait < 1000000; wait++) {
         _89 ctrl = event_ring[(xhci_ev_idx * 4) + 3];
         _15((ctrl & 1) EQ xhci_ev_cycle) { 
@@ -977,10 +1035,15 @@ _50 pci_scan_all() {
                                 /// Wir speichern auch BAR1 (falls das Mainboard es nutzt)
                                 _89 bar1 = pci_read(bus, dev, func, 0x14);
                                 
+                                uint64_t full_bar = clean_bar0;
+                                if ((bar0 & 0x04) != 0) { /// 64-bit BAR!
+                                    full_bar = ((uint64_t)bar1 << 32) | clean_bar0;
+                                }
+                                
                                 /// WIR IGNORIEREN NIEMANDEN MEHR!
-                                if (clean_bar0 != 0) {
+                                if (full_bar != 0) {
                                     /// Wir übergeben BAR0 an unsere Diagnose-Sonde
-                                    int result = init_xhci_probe(clean_bar0, xhci_discovery_count);
+                                    int result = init_xhci_probe(full_bar, xhci_discovery_count);
                                     
                                     if (result == 1) {
                                         sys_hw.usb_bar0 = clean_bar0;

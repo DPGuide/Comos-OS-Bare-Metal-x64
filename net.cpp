@@ -20,8 +20,8 @@
 _184 global_dhcp_buf[300];
 _184 global_udp_buf[1500];
 _184 global_ip_buf[1514];
-_172 _50 mmio_write32(_89 addr, _89 val);
-_172 _89 mmio_read32(_89 addr);
+_172 _89 mmio_read32(uintptr_t addr);
+_172 _50 mmio_write32(uintptr_t addr, _89 val);
 _172 _50 tba_master_stream(_184* network_payload);
 /// --- PROTOTYPEN ---
 _50 e1000_enable_rx();

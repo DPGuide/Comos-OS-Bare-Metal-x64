@@ -33,7 +33,7 @@ struct USB_CSW {
 uint32_t global_mouse_slot = 0;
 uint32_t mouse_trb_idx = 0;
 uint32_t mouse_trb_cycle = 1;
-extern uint32_t xhci_db_base;
+extern uintptr_t xhci_db_base;
 
 void xhci_submit_mouse_read() {
     if (global_mouse_slot == 0) return;
@@ -125,10 +125,10 @@ extern char hw_usb[48];
 extern char cmd_status[256];
 extern void str_cpy(char* d, const char* s); 
 
-extern uint32_t xhci_db_base;
+extern uintptr_t xhci_db_base;
 extern uint32_t* xhci_dcbaa;
-extern void xhci_power_on_ports(uint32_t op_base, int max_ports);
-extern uint8_t xhci_check_ports(uint32_t op_base, int max_ports);
+extern void xhci_power_on_ports(uintptr_t op_base, int max_ports);
+extern uint8_t xhci_check_ports(uintptr_t op_base, int max_ports);
 extern "C" uint32_t xhci_bot_get_capacity(uint8_t slot_id);
 
 void init_xhci(uint32_t bar0) {}
@@ -136,13 +136,17 @@ extern _50 xhci_bios_handoff(_89 cap_base);
 
 extern void map_mmio_64(uint64_t phys_addr);
 
-int init_xhci_probe(uint32_t bar0, int id) {
-    global_xhci_base_addr = bar0;
+extern _50 debug_print(const char* msg);
+int init_xhci_probe(uint64_t base_addr, int id) {
+    global_xhci_base_addr = base_addr;
+    
+    debug_print("XHCI: Probe called! Mapping MMIO...");
     
     /// BARE METAL FIX: xHCI MMIO muss in den 64-Bit Page Tables gemappt sein!
-    map_mmio_64(bar0);
+    map_mmio_64(base_addr);
     /// Der xHCI BAR kann mehrere 2MB-Regionen umfassen
-    map_mmio_64(bar0 + 0x200000);
+    map_mmio_64(base_addr + 0x200000);
+
     
     xhci_bios_handoff(global_xhci_base_addr);
     uint8_t caplength = *((volatile uint8_t*)global_xhci_base_addr);
@@ -362,19 +366,28 @@ _172 DriveInfo drives[8];
 _172 _43 drive_count;
 _172 _30 cmd_status[256];
 
+extern _50 debug_print(const char* msg);
 extern "C" _50 usb_scan_and_mount() {
     _43 usb_found = 0;
     
+    debug_print("USB: Scan and mount started.");
     /// BARE METAL FIX: xHCI (USB 3.0) SCAN FIRST
     _15(global_xhci_base_addr NEQ 0 AND drive_count < 8) {
         uint8_t caplength = *((volatile uint8_t*)global_xhci_base_addr);
-        uint32_t op_base = global_xhci_base_addr + caplength;
+        uintptr_t op_base = global_xhci_base_addr + caplength;
+        
+        debug_print("USB: Found global_xhci_base_addr.");
+        
+        extern _50 xhci_init_controller(_89 op_base);
+        xhci_init_controller(op_base);
         
         str_cpy(cmd_status, "xHCI: POWERING PORTS...");
         xhci_power_on_ports(op_base, 8); 
         
         str_cpy(cmd_status, "xHCI: SCANNING PORTS...");
+        debug_print("USB: Calling xhci_check_ports...");
         uint8_t slot_id = xhci_check_ports(op_base, 8);
+
         
         _15(slot_id > 0) {
             str_cpy(cmd_status, "xHCI: READING CAPACITY...");
