@@ -6,63 +6,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#pragma pack(push, 1)
-_202 FAT32_BPB {
-    _184 jmp[3];
-    _30  oem_name[8];
-    _182 bytes_per_sector;
-    _184 sectors_per_cluster;
-    _182 reserved_sectors;
-    _184 fat_count;
-    _182 root_dir_entries;
-    _182 total_sectors_16;
-    _184 media_type;
-    _182 sectors_per_fat_16;
-    _182 sectors_per_track;
-    _182 heads;
-    _43  hidden_sectors;
-    _43  total_sectors_32;
-    _43  sectors_per_fat_32;
-    _182 ext_flags;
-    _182 fs_version;
-    _43  root_cluster;
-    _182 fs_info;
-    _182 backup_boot_sector;
-    _184 reserved[12];
-    _184 drive_number;
-    _184 reserved1;
-    _184 boot_signature;
-    _43  volume_id;
-    _30  volume_label[11];
-    _30  fs_type[8];
-} __attribute__((packed));
-
-_202 FAT32_DirectoryEntry {
-    _30  name[11];
-    _184 attr;
-    _184 reserved;
-    _184 create_time_tenths;
-    _182 create_time;
-    _182 create_date;
-    _182 access_date;
-    _182 cluster_high;
-    _182 modify_time;
-    _182 modify_date;
-    _182 cluster_low;
-    _43  size;
-} __attribute__((packed));
-
-_202 FAT32_LFN_Entry {
-    _184 sequence_number;
-    _182 name_part_1[5];
-    _184 attr;
-    _184 reserved_1;
-    _184 checksum;
-    _182 name_part_2[6];
-    _182 reserved_2;
-    _182 name_part_3[2];
-} __attribute__((packed));
-#pragma pack(pop)
+#include "cosmos_fat32.h"
 
 /// ==========================================
 /// BARE METAL FIX: EXTERNE LAUFWERKS-BRÜCKE
@@ -3184,9 +3128,6 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                 static int current_page_offset = 0;
 				static uint32_t active_ntfs_folder_lba = 5; 
 				static uint32_t active_fat32_folder_lba = 0;
-				static uint32_t fat32_data_start = 0;
-				static uint32_t fat32_sectors_per_cluster = 0;
-                static uint32_t fat32_root_lba = 0;
 				/// BARE METAL FIX: DAS RAM CLIPBOARD (ZWISCHENABLAGE)
                 static _44 clipboard_active = _86;
                 static char clipboard_name[12] = {0};
@@ -3400,67 +3341,23 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
 
                     _15(is_fat32_drive AND need_ui_refresh) {
                         _39(int f=0; f<28; f++) { cfs_files[f].exists = 0; cfs_files[f].name[0] = 0; }
-                        int file_idx = 0; int skipped = 0;
                         
                         uint8_t* dir_buf = (uint8_t*)buf_dir;
                         disk_read_auto(active_fat32_folder_lba, (uint64_t)dir_buf);
                         _39(_192 _43 w = 0; w < 500000; w++) __asm__ _192("nop");
                         
-                        FAT32_DirectoryEntry* dir = (FAT32_DirectoryEntry*)dir_buf;
-                        
-                        _30 current_lfn[256];
-                        _39(_43 l=0; l<256; l++) current_lfn[l] = 0;
-                        _44 has_lfn = _86;
-                        
-                        _39(_43 i = 0; i < 16; i++) {
-                            if (file_idx >= 8) break;
-                            
-                            _15(dir[i].name[0] EQ 0x00) _37;
-                            _15(dir[i].name[0] EQ 0xE5) { has_lfn = _86; _101; }
-                            
-                            _15(dir[i].attr EQ 0x0F) {
-                                has_lfn = _128;
-                                FAT32_LFN_Entry* lfn = (FAT32_LFN_Entry*)&dir[i];
-                                _43 seq = lfn->sequence_number & 0x1F;
-                                _15(seq EQ 0 OR seq > 20) _101;
-                                _43 offset = (seq - 1) * 13;
-                                current_lfn[offset + 0] = (_30)lfn->name_part_1[0]; current_lfn[offset + 1] = (_30)lfn->name_part_1[1];
-                                current_lfn[offset + 2] = (_30)lfn->name_part_1[2]; current_lfn[offset + 3] = (_30)lfn->name_part_1[3];
-                                current_lfn[offset + 4] = (_30)lfn->name_part_1[4]; current_lfn[offset + 5] = (_30)lfn->name_part_2[0];
-                                current_lfn[offset + 6] = (_30)lfn->name_part_2[1]; current_lfn[offset + 7] = (_30)lfn->name_part_2[2];
-                                current_lfn[offset + 8] = (_30)lfn->name_part_2[3]; current_lfn[offset + 9] = (_30)lfn->name_part_2[4];
-                                current_lfn[offset + 10] = (_30)lfn->name_part_2[5]; current_lfn[offset + 11] = (_30)lfn->name_part_3[0];
-                                current_lfn[offset + 12] = (_30)lfn->name_part_3[1];
-                                _101;
+                        FAT32_ParsedFile pfiles[28];
+                        if (fat32_list_dir(active_fat32_folder_lba, dir_buf, pfiles, 28, current_folder_id, current_page_offset)) {
+                            _39(int i=0; i<28; i++) {
+                                cfs_files[i].exists = pfiles[i].exists;
+                                cfs_files[i].parent_idx = pfiles[i].parent_idx;
+                                cfs_files[i].is_folder = pfiles[i].is_folder;
+                                cfs_files[i].size = pfiles[i].size;
+                                cfs_files[i].start_lba = pfiles[i].start_lba;
+                                _39(int n=0; n<12; n++) cfs_files[i].name[n] = pfiles[i].name[n];
                             }
-                            
-                            _15(dir[i].attr & 0x08) { has_lfn = _86; _101; }
-                            
-                            if (skipped < current_page_offset) { skipped++; has_lfn=_86; _101; }
-                            
-                            cfs_files[file_idx].exists = 1;
-                            cfs_files[file_idx].parent_idx = current_folder_id;
-                            cfs_files[file_idx].is_folder = (dir[i].attr & 0x10) ? 1 : 0;
-                            cfs_files[file_idx].size = dir[i].size;
-                            uint32_t fcluster = ((uint32_t)dir[i].cluster_high << 16) | dir[i].cluster_low;
-                            cfs_files[file_idx].start_lba = fat32_data_start + ((fcluster - 2) * fat32_sectors_per_cluster);
-                            
-                            _15(has_lfn) {
-                                _39(int n=0; n<11; n++) { 
-                                    char c = current_lfn[n];
-                                    cfs_files[file_idx].name[n] = (c >= 32 && c <= 126) ? c : 0;
-                                }
-                                cfs_files[file_idx].name[11] = 0;
-                            } _41 {
-                                _39(int n=0; n<11; n++) {
-                                    char c = dir[i].name[n];
-                                    cfs_files[file_idx].name[n] = (c >= 32 && c <= 126) ? c : 0;
-                                }
-                                cfs_files[file_idx].name[11] = 0;
-                            }
-                            has_lfn = _86;
-                            file_idx++;
                         }
+                        
                         need_ui_refresh = _86;
                     }
 
@@ -3801,16 +3698,13 @@ txt_color = (win->color > 0x888888) ? 0x000000 : 0xFFFFFF;
                                 disk_read_auto(target_fat32_lba, (uint64_t)buf_dir);
                                 _39(_192 _43 w = 0; w < 500000; w++) __asm__ _192("nop");
                                 
-                                FAT32_BPB* bpb = (FAT32_BPB*)buf_dir;
-                                fat32_sectors_per_cluster = bpb->sectors_per_cluster;
-                                uint32_t fat_start = bpb->reserved_sectors;
-                                fat32_data_start = fat_start + (bpb->fat_count * bpb->sectors_per_fat_32);
-                                active_fat32_folder_lba = fat32_data_start + ((bpb->root_cluster - 2) * bpb->sectors_per_cluster);
-                                /// Start is offset by target_fat32_lba (the partition start)
-                                fat32_data_start += target_fat32_lba;
-                                active_fat32_folder_lba += target_fat32_lba;
-                                
-                                need_ui_refresh = _128;
+                                if (fat32_init(target_fat32_lba, (uint8_t*)buf_dir)) {
+                                    active_fat32_folder_lba = fat32_root_lba;
+                                    need_ui_refresh = _128;
+                                } else {
+                                    print_win(win, "\n[ERR] FAT32 INIT FAILED!\n");
+                                    is_fat32_drive = _86;
+                                }
                             } _41 { print_win(win, "\n[ERR] NO VALID NTFS/FAT32 FOUND.\n"); }
                         }
                         
