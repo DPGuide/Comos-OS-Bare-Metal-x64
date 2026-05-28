@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/875bba43-d745-42f8-8c85-3b098db35e8b
 + Editor Text messages
 + SATA / USB 1.1 (x) / 2.0 () / 3.0 (/)
 + + MBR / GPT / CFS [SATA / USB (x) / (x) ] 
-+ + MBR / GPT / NFTS [SATA / USB (x) / ( ) ] 
++ + MBR / GPT / NFTS [SATA / USB (x) / (\) ] 
 + + MBR / GPT / FAT32 [USB (/) ] 
 + + MBR / GPT / exFAT [USB ( ) ] 
 + + MBR / GPT / ExT [SATA / USB ( ) / ( ) ] 
